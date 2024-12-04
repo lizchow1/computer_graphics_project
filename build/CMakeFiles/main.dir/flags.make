@@ -4,7 +4,7 @@
 # compile CXX with /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glfw-3.1.2/include" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glm-0.9.7.1" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glad-opengl-3.3/include" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/scr" -F/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/System/Library/Frameworks
+CXX_INCLUDES = -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glfw-3.1.2/include" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glm-0.9.7.1" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glad-opengl-3.3/include" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/src" -I"/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/external/glad-3.3/include" -F/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/System/Library/Frameworks
 
 CXX_FLAGSx86_64 = -std=gnu++11 -arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk -mmacosx-version-min=14.4
 

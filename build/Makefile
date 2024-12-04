@@ -179,6 +179,30 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/main.dir/build.make CMakeFiles/main.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
+src/render/shader.o: src/render/shader.cpp.o
+.PHONY : src/render/shader.o
+
+# target to build an object file
+src/render/shader.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/main.dir/build.make CMakeFiles/main.dir/src/render/shader.cpp.o
+.PHONY : src/render/shader.cpp.o
+
+src/render/shader.i: src/render/shader.cpp.i
+.PHONY : src/render/shader.i
+
+# target to preprocess a source file
+src/render/shader.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/main.dir/build.make CMakeFiles/main.dir/src/render/shader.cpp.i
+.PHONY : src/render/shader.cpp.i
+
+src/render/shader.s: src/render/shader.cpp.s
+.PHONY : src/render/shader.s
+
+# target to generate assembly for a file
+src/render/shader.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/main.dir/build.make CMakeFiles/main.dir/src/render/shader.cpp.s
+.PHONY : src/render/shader.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -193,6 +217,9 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
+	@echo "... src/render/shader.o"
+	@echo "... src/render/shader.i"
+	@echo "... src/render/shader.s"
 .PHONY : help
 
 
