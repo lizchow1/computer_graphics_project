@@ -1,0 +1,13 @@
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/CMakeFiles/main.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/CMakeFiles/edit_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/CMakeFiles/rebuild_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/CMakeFiles/edit_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/CMakeFiles/rebuild_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glad-3.3/CMakeFiles/glad.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glad-3.3/CMakeFiles/edit_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glad-3.3/CMakeFiles/rebuild_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glfw-3.1.2/CMakeFiles/edit_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glfw-3.1.2/CMakeFiles/rebuild_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glfw-3.1.2/src/CMakeFiles/glfw.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glfw-3.1.2/src/CMakeFiles/edit_cache.dir
+/Users/lizchow/Desktop/collegeShit/Computer Graphics/project/computer_graphics_project/build/external/glfw-3.1.2/src/CMakeFiles/rebuild_cache.dir
