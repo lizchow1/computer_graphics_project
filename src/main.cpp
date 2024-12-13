@@ -27,7 +27,9 @@ glm::vec3 lookat(50.0f, 0.0f, 50.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 float FoV = 75.0f;
 float zNear = 0.1f;
-float zFar = 1000.0f;
+float zFar = 5000.0f;
+glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
+float cameraViewDistance = glm::length(lookat - eye_center);
 
 // Global chunk coordinates
 int currentChunkX = 0;
@@ -163,7 +165,7 @@ int main() {
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear(); 
-    int range = 10;
+    int range = 5;
 
     for (int dz = -range; dz <= range; ++dz) {
         for (int dx = -range; dx <= range; ++dx) {
@@ -278,25 +280,16 @@ void processInput(GLFWwindow *window) {
 
     float chunkSize = GRID_SIZE * GRID_SCALE;
 
-    if (eye_center.x > chunkSize / 2.0f) {
-        eye_center.x -= chunkSize;
-        currentChunkX += 1;
-        updateChunks(currentChunkX, currentChunkZ);
-    } else if (eye_center.x < -chunkSize / 2.0f) {
-        eye_center.x += chunkSize;
-        currentChunkX -= 1;
+    int newChunkX = static_cast<int>(std::floor(eye_center.x / chunkSize));
+    int newChunkZ = static_cast<int>(std::floor(eye_center.z / chunkSize));
+
+    if (newChunkX != currentChunkX || newChunkZ != currentChunkZ) {
+        currentChunkX = newChunkX;
+        currentChunkZ = newChunkZ;
         updateChunks(currentChunkX, currentChunkZ);
     }
 
-    if (eye_center.z > chunkSize / 2.0f) {
-        eye_center.z -= chunkSize;
-        currentChunkZ += 1;
-        updateChunks(currentChunkX, currentChunkZ);
-    } else if (eye_center.z < -chunkSize / 2.0f) {
-        eye_center.z += chunkSize;
-        currentChunkZ -= 1;
-        updateChunks(currentChunkX, currentChunkZ);
-    }
+    lookat = eye_center + forwardDirection * cameraViewDistance;
 }
 
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode) {
