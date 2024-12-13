@@ -22,18 +22,23 @@ const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
 
-glm::vec3 eye_center(0.0f, 50.0f, 100.0f);
-glm::vec3 lookat(0.0f, 0.0f, 0.0f);
+glm::vec3 eye_center(50.0f, 50.0f, -50.0f);
+glm::vec3 lookat(50.0f, 0.0f, 50.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 float FoV = 75.0f;
 float zNear = 0.1f;
 float zFar = 1000.0f;
 
+// Global chunk coordinates
+int currentChunkX = 0;
+int currentChunkZ = 0;
+
 // Function prototypes
 void processInput(GLFWwindow *window);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
-std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices);
+std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
 GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
+void updateChunks(int chunkX, int chunkZ);
 
 GLuint loadTexture(const char* path) {
     GLuint textureID;
@@ -61,6 +66,14 @@ GLuint loadTexture(const char* path) {
     return textureID;
 }
 
+struct Chunk {
+    GLuint VAO;
+    unsigned int indexCount;
+    glm::vec2 position;  
+};
+
+std::vector<Chunk> activeChunks;
+
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -72,7 +85,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window = glfwCreateWindow(1024, 768, "Terrain Rendering with Camera", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(1024, 768, "Infinite Terrain", NULL, NULL);
     if (window == NULL) {
         std::cerr << "Failed to open a GLFW window." << std::endl;
         glfwTerminate();
@@ -86,7 +99,7 @@ int main() {
         return -1;
     }
 
-	 GLuint grassTexture = loadTexture("../src/utils/grass.jpeg");
+    GLuint grassTexture = loadTexture("../src/utils/grass.jpeg");
     if (grassTexture == 0) {
         std::cerr << "Failed to load grass texture!" << std::endl;
         return -1;
@@ -98,14 +111,16 @@ int main() {
         return -1;
     }
 
-    std::vector<unsigned int> indices;
-    std::vector<Vertex> vertices = generateTerrain(GRID_SIZE, GRID_SCALE, HEIGHT_SCALE, indices);
-    GLuint terrainVAO = setupTerrainBuffers(vertices, indices);
+    // Initialize chunks around the starting position
+    updateChunks(currentChunkX, currentChunkZ);
 
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
 
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); // A sky-like background
+
     while (!glfwWindowShouldClose(window)) {
-        processInput(window);
+        processInput(window);  // Handle input
 
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vp = projectionMatrix * viewMatrix;
@@ -114,21 +129,29 @@ int main() {
 
         glUseProgram(shaderProgram);
         GLint vpLoc = glGetUniformLocation(shaderProgram, "vpMatrix");
-		if (vpLoc == -1) {
-		    std::cerr << "vpMatrix uniform not found in shader!" << std::endl;
-		    return -1;
-		}
-		glUniformMatrix4fv(vpLoc, 1, GL_FALSE, &vp[0][0]);
-
+        if (vpLoc == -1) {
+            std::cerr << "vpMatrix uniform not found in shader!" << std::endl;
+            return -1;
+        }
+        glUniformMatrix4fv(vpLoc, 1, GL_FALSE, &vp[0][0]);
 
         // Bind the texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, grassTexture);
         glUniform1i(glGetUniformLocation(shaderProgram, "terrainTexture"), 0);
 
-        // Draw the terrain
-        glBindVertexArray(terrainVAO);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        // Render all active chunks with chunk offset
+        for (const auto& chunk : activeChunks) {
+            GLint chunkOffsetLoc = glGetUniformLocation(shaderProgram, "chunkOffset");
+            if (chunkOffsetLoc == -1) {
+                std::cerr << "chunkOffset uniform not found in shader!" << std::endl;
+                continue;
+            }
+            glUniform2f(chunkOffsetLoc, chunk.position.x, chunk.position.y);
+
+            glBindVertexArray(chunk.VAO);
+            glDrawElements(GL_TRIANGLES, chunk.indexCount, GL_UNSIGNED_INT, 0);
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -138,33 +161,65 @@ int main() {
     return 0;
 }
 
-std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices) {
-    // Function implementation from `main.cpp`
-    std::vector<Vertex> vertices;
+void updateChunks(int chunkX, int chunkZ) {
+    activeChunks.clear(); 
+    int range = 10;
 
+    for (int dz = -range; dz <= range; ++dz) {
+        for (int dx = -range; dx <= range; ++dx) {
+            int cx = chunkX + dx;
+            int cz = chunkZ + dz;
+            
+            // Just store chunk coordinates; no scaling here in the CPU vertices
+            glm::vec2 chunkPos(cx * GRID_SIZE * GRID_SCALE, cz * GRID_SIZE * GRID_SCALE);
+
+            std::vector<unsigned int> indices;
+            std::vector<Vertex> vertices = generateTerrain(GRID_SIZE, GRID_SCALE, HEIGHT_SCALE, indices, cx, cz);
+
+            GLuint terrainVAO = setupTerrainBuffers(vertices, indices);
+            activeChunks.push_back({terrainVAO, (unsigned int)indices.size(), chunkPos});
+        }
+    }
+}
+
+std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, 
+                                    std::vector<unsigned int>& indices, int chunkX, int chunkZ)
+{
+    std::vector<Vertex> vertices;
+    vertices.reserve((gridSize + 1) * (gridSize + 1));
+    
     FastNoiseLite noise;
     noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
     noise.SetFrequency(0.05f);
 
+    float worldOffsetX = chunkX * (float)gridSize * gridScale;
+    float worldOffsetZ = chunkZ * (float)gridSize * gridScale;
+
     for (unsigned int z = 0; z <= gridSize; ++z) {
         for (unsigned int x = 0; x <= gridSize; ++x) {
+            float localX = x * gridScale;
+            float localZ = z * gridScale;
+
+            float globalX = worldOffsetX + localX;
+            float globalZ = worldOffsetZ + localZ;
+
+            float height = noise.GetNoise(globalX, globalZ) * heightScale;
+
             Vertex vertex;
-            vertex.Position = glm::vec3(x * gridScale, 0.0f, z * gridScale);
+            vertex.Position = glm::vec3(localX, height, localZ);
             vertex.Normal = glm::vec3(0.0f, 1.0f, 0.0f);
             vertex.TexCoords = glm::vec2((float)x / gridSize, (float)z / gridSize);
-
-            float height = noise.GetNoise((float)x, (float)z);
-            vertex.Position.y = height * heightScale;
 
             vertices.push_back(vertex);
         }
     }
 
+    indices.reserve(gridSize * gridSize * 6);
     for (unsigned int z = 0; z < gridSize; ++z) {
         for (unsigned int x = 0; x < gridSize; ++x) {
             unsigned int topLeft = z * (gridSize + 1) + x;
             unsigned int topRight = topLeft + 1;
-            unsigned int bottomLeft = (z + 1) * (gridSize + 1) + x;
+            unsigned int bottomLeft = (z + 1)*(gridSize + 1) + x;
             unsigned int bottomRight = bottomLeft + 1;
 
             indices.push_back(topLeft);
@@ -189,10 +244,10 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
     glBindVertexArray(VAO);
 
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
@@ -206,16 +261,42 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
     return VAO;
 }
 
-
 void processInput(GLFWwindow *window) {
+    static float movementSpeed = 1.0f;
+    glm::vec3 movement(0.0f);
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        eye_center.z -= 1.0f;
+        movement.z -= movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        eye_center.z += 1.0f;
+        movement.z += movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        eye_center.x -= 1.0f;
+        movement.x -= movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        eye_center.x += 1.0f;
+        movement.x += movementSpeed;
+
+    eye_center += movement;
+
+    float chunkSize = GRID_SIZE * GRID_SCALE;
+
+    if (eye_center.x > chunkSize / 2.0f) {
+        eye_center.x -= chunkSize;
+        currentChunkX += 1;
+        updateChunks(currentChunkX, currentChunkZ);
+    } else if (eye_center.x < -chunkSize / 2.0f) {
+        eye_center.x += chunkSize;
+        currentChunkX -= 1;
+        updateChunks(currentChunkX, currentChunkZ);
+    }
+
+    if (eye_center.z > chunkSize / 2.0f) {
+        eye_center.z -= chunkSize;
+        currentChunkZ += 1;
+        updateChunks(currentChunkX, currentChunkZ);
+    } else if (eye_center.z < -chunkSize / 2.0f) {
+        eye_center.z += chunkSize;
+        currentChunkZ -= 1;
+        updateChunks(currentChunkX, currentChunkZ);
+    }
 }
 
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode) {
