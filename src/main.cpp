@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 #include <iostream>
+#include <cmath>
 #include "external/FastNoiseLite.h"
 #include <render/shader.h>
 
@@ -25,10 +26,13 @@ const float HEIGHT_SCALE = 10.0f;
 glm::vec3 eye_center(50.0f, 50.0f, -50.0f);
 glm::vec3 lookat(50.0f, 0.0f, 50.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
+glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
+glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                        
 float FoV = 75.0f;
 float zNear = 0.1f;
 float zFar = 5000.0f;
 glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
+glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));
 float cameraViewDistance = glm::length(lookat - eye_center);
 
 // Global chunk coordinates
@@ -41,6 +45,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
 GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
 void updateChunks(int chunkX, int chunkZ);
+void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture);
+void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
 
 GLuint loadTexture(const char* path) {
     GLuint textureID;
@@ -76,6 +82,88 @@ struct Chunk {
 
 std::vector<Chunk> activeChunks;
 
+void generateSphere(float radius, int sectorCount, int stackCount, 
+                    std::vector<float>& vertexData, 
+                    std::vector<unsigned int>& indices) {
+    // vertexData will store: position.x, position.y, position.z, normal.x, normal.y, normal.z
+    const float PI = 3.14159265359f;
+
+    for (int i = 0; i <= stackCount; ++i) {
+        float stackAngle = PI/2 - i * (PI/stackCount); 
+        float xy = radius * cosf(stackAngle);   
+        float z = radius * sinf(stackAngle);    
+
+        for (int j = 0; j <= sectorCount; ++j) {
+            float sectorAngle = j * (2 * PI / sectorCount);
+            float x = xy * cosf(sectorAngle);
+            float y = xy * sinf(sectorAngle);
+
+            // Position
+            vertexData.push_back(x);
+            vertexData.push_back(y);
+            vertexData.push_back(z);
+
+            // Normal (normalize the vector since it's a sphere)
+            glm::vec3 normal = glm::normalize(glm::vec3(x, y, z));
+            vertexData.push_back(normal.x);
+            vertexData.push_back(normal.y);
+            vertexData.push_back(normal.z);
+        }
+    }
+
+    // Indices
+    for (int i = 0; i < stackCount; ++i) {
+        int k1 = i * (sectorCount + 1);
+        int k2 = k1 + sectorCount + 1;
+
+        for (int j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+            indices.push_back(k1);
+            indices.push_back(k2);
+            indices.push_back(k1 + 1);
+
+            indices.push_back(k1 + 1);
+            indices.push_back(k2);
+            indices.push_back(k2 + 1);
+        }
+    }
+}
+
+
+GLuint createSunVAO() {
+    std::vector<float> vertexData;
+    std::vector<unsigned int> indices;
+
+    int sectorCount = 36;
+    int stackCount  = 18;
+    generateSphere(1.0f, sectorCount, stackCount, vertexData, indices);
+
+    GLuint VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    // Each vertex has 6 floats: position(3) + normal(3)
+    glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), vertexData.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+    // Position attribute
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+
+    // Normal attribute
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+
+    glBindVertexArray(0);
+
+    return VAO;
+}
+
+
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -107,44 +195,58 @@ int main() {
         return -1;
     }
 
-    GLuint shaderProgram = LoadShadersFromFile("../src/shader/terrain.vert", "../src/shader/terrain.frag");
-    if (shaderProgram == 0) {
-        std::cerr << "Failed to load shaders." << std::endl;
+    GLuint terrainShader = LoadShadersFromFile("../src/shader/terrain.vert", "../src/shader/terrain.frag");
+    if (terrainShader == 0) {
+        std::cerr << "Failed to load terrain shaders." << std::endl;
         return -1;
     }
 
-    // Initialize chunks around the starting position
+    GLuint sunLightingShader = LoadShadersFromFile("../src/shader/sun.vert", "../src/shader/sun.frag");
+    if (sunLightingShader == 0) {
+        std::cerr << "Failed to load sun lighting shaders." << std::endl;
+        return -1;
+    }
+
+    GLuint sunVAO = createSunVAO();
+
     updateChunks(currentChunkX, currentChunkZ);
 
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); // A sky-like background
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); 
 
-    while (!glfwWindowShouldClose(window)) {
+        while (!glfwWindowShouldClose(window)) {
         processInput(window);  // Handle input
 
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
-        glm::mat4 vp = projectionMatrix * viewMatrix;
+        glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glUseProgram(shaderProgram);
-        GLint vpLoc = glGetUniformLocation(shaderProgram, "vpMatrix");
-        if (vpLoc == -1) {
-            std::cerr << "vpMatrix uniform not found in shader!" << std::endl;
-            return -1;
-        }
-        glUniformMatrix4fv(vpLoc, 1, GL_FALSE, &vp[0][0]);
+        renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
 
-        // Bind the texture
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, grassTexture);
-        glUniform1i(glGetUniformLocation(shaderProgram, "terrainTexture"), 0);
+        renderSun(sunLightingShader, sunVAO, vpMatrix);
 
-        // Render all active chunks with chunk offset
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    glfwTerminate();
+    return 0;
+}
+
+void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture) {
+    glUseProgram(shader);
+
+    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(shader, "terrainTexture"), 0);
+
         for (const auto& chunk : activeChunks) {
-            GLint chunkOffsetLoc = glGetUniformLocation(shaderProgram, "chunkOffset");
+            GLint chunkOffsetLoc = glGetUniformLocation(shader, "chunkOffset");
             if (chunkOffsetLoc == -1) {
                 std::cerr << "chunkOffset uniform not found in shader!" << std::endl;
                 continue;
@@ -154,14 +256,37 @@ int main() {
             glBindVertexArray(chunk.VAO);
             glDrawElements(GL_TRIANGLES, chunk.indexCount, GL_UNSIGNED_INT, 0);
         }
-
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-
-    glfwTerminate();
-    return 0;
 }
+
+void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
+    glUseProgram(shader);
+
+    float forwardDistance = 200.0f; 
+    float rightOffset     = 125.0f; 
+    float upOffset        = 100.0f; 
+    glm::vec3 sunPosition = eye_center + forwardDirection * forwardDistance + rightDirection * rightOffset + up * upOffset;
+
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), sunPosition);
+    model = glm::scale(model, glm::vec3(10.0f));
+
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &model[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+
+    // Light uniforms
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
+    glUniform1f(glGetUniformLocation(shader, "intensity"), 1.0f);
+
+    // Example directional light direction
+    glm::vec3 dir = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));
+    glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &dir[0]);
+
+    // Draw the sphere
+    glBindVertexArray(sunVAO);
+    // Sphere has (sectorCount * stackCount * 6) indices
+    glDrawElements(GL_TRIANGLES, 36 * 18 * 6, GL_UNSIGNED_INT, 0);
+}
+
+
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear(); 
