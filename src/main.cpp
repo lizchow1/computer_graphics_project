@@ -38,7 +38,7 @@ const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
 
-glm::vec3 eye_center(0.0f, 200.0f, 0.0f);
+glm::vec3 eye_center(100.0f, 200.0f, 0.0f);
 glm::vec3 lookat(0.0f, 300.0f, 400.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
@@ -52,13 +52,15 @@ float cameraViewDistance = glm::length(lookat - eye_center);
 std::vector<glm::mat4> turbineInstances;
 GLuint instanceVBO;
 const int NUM_TURBINES = 20;
+static float lastFrameTime = 0.0f; 
+static float deltaTime = 0.0f;
 
 // Global chunk coordinates
 int currentChunkX = 0;
 int currentChunkZ = 0;
 
 // Function prototypes
-void processInput(GLFWwindow *window);
+void processInput(GLFWwindow *window, float deltaTime);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
 GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
@@ -317,6 +319,7 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
     glfwSetKeyCallback(window, key_callback);
 
     if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
@@ -381,7 +384,10 @@ int main() {
     }
 
     while (!glfwWindowShouldClose(window)) {
-        processInput(window);  
+        float currentFrameTime = glfwGetTime();
+        deltaTime = currentFrameTime - lastFrameTime;
+        lastFrameTime = currentFrameTime;
+        processInput(window, deltaTime);
 
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
@@ -612,8 +618,9 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
     return VAO;
 }
 
-void processInput(GLFWwindow *window) {
-    static float movementSpeed = 5.0f;
+void processInput(GLFWwindow *window, float deltaTime) {
+    static float baseSpeed = 25.0f;
+    float movementSpeed = baseSpeed * deltaTime;
     glm::vec3 movement(0.0f);
 
     glm::vec3 flatForward = glm::normalize(glm::vec3(forwardDirection.x, 0.0f, forwardDirection.z));
