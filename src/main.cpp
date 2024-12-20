@@ -38,8 +38,8 @@ const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
 
-glm::vec3 eye_center(50.0f, 100.0f, -150.0f);
-glm::vec3 lookat(50.0f, 50.0f, 50.0f);
+glm::vec3 eye_center(0.0f, 200.0f, 0.0f);
+glm::vec3 lookat(0.0f, 300.0f, 400.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
 glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                        
@@ -360,38 +360,38 @@ int main() {
     Turbine turbine = loadTurbine("../src/model/turbine/Turbine.glb");
 
     generateTurbineInstances();
-    
+
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
     glBufferData(GL_ARRAY_BUFFER, turbineInstances.size() * sizeof(glm::mat4), &turbineInstances[0], GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    
+
     for (auto& tmesh : turbine.meshes) {
         glBindVertexArray(tmesh.VAO);
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    
+
         std::size_t vec4Size = sizeof(glm::vec4);
         for (int i = 0; i < 4; i++) {
             glEnableVertexAttribArray(3 + i);
             glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(i * vec4Size));
             glVertexAttribDivisor(3 + i, 1);
         }
-    
+
         glBindVertexArray(0);
     }
-    
+
     while (!glfwWindowShouldClose(window)) {
         processInput(window);  
-    
+
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
-    
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
+
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         renderSun(sunLightingShader, sunVAO, vpMatrix);
         renderTurbine(turbine, turbineShader, vpMatrix);
-    
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -453,28 +453,35 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
 
-    static double lastTime = glfwGetTime();
-    double currentTime = glfwGetTime();
-    float deltaTime = float(currentTime - lastTime);
-    lastTime = currentTime;
-
     static float bladeRotation = 0.0f;
-    float rotationSpeed = 20.0f;
-    bladeRotation += deltaTime * rotationSpeed;
+    float rotationSpeed = 0.10f;
+    bladeRotation += glfwGetTime() * rotationSpeed;
     bladeRotation = fmod(bladeRotation, 360.0f);
 
-    glm::mat4 bladeRotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
-    
-    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
-    glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
-    glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
-    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+    glm::mat4 baseModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, -5.0f, 50.0f));
+    baseModelMatrix = glm::rotate(baseModelMatrix, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    baseModelMatrix = glm::scale(baseModelMatrix, glm::vec3(1.0f));
+
+    glm::vec3 bladeAttachmentPoint(0.0f, 70.0f, 0.0f);
+    glm::vec3 rotationCircleScale(0.5f, 0.5f, 0.5f);
 
     for (size_t i = 0; i < turbine.meshes.size(); ++i) {
-        bool isBladeMesh = (i == 16);
+        glm::mat4 modelMatrix = baseModelMatrix;
 
-        glUniform1i(glGetUniformLocation(shader, "isBlade"), isBladeMesh ? 1 : 0);
-        glUniformMatrix4fv(glGetUniformLocation(shader, "bladeRotationMatrix"), 1, GL_FALSE, &bladeRotationMatrix[0][0]);
+        if (i == 16) { // Blade mesh
+            modelMatrix = glm::translate(modelMatrix, bladeAttachmentPoint);
+            modelMatrix = glm::scale(modelMatrix, rotationCircleScale);
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f) / rotationCircleScale);
+            modelMatrix = glm::translate(modelMatrix, -bladeAttachmentPoint);
+        }
+
+        glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelMatrix[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+        glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
+        glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
+        glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+        glUniform1i(glGetUniformLocation(shader, "isBlade"), (i == 16) ? 1 : 0);
 
         glBindVertexArray(turbine.meshes[i].VAO);
 
@@ -486,14 +493,15 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
     }
 }
 
+
 void generateTurbineInstances() {
     turbineInstances.clear();
     turbineInstances.reserve(NUM_TURBINES);
 
     srand(42);
     for (int i = 0; i < NUM_TURBINES; i++) {
-        float x = (rand() % 1000) - 500.0f;
-        float z = (rand() % 1000) - 500.0f;
+        float x = (rand() % 1000);
+        float z = (rand() % 1000);
         float y = 0.0f; // You could sample the terrain height if needed
 
         float angle = glm::radians((float)(rand() % 360));
@@ -506,24 +514,24 @@ void generateTurbineInstances() {
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear(); 
-    int range = 5;
+    int range = 15;
+    int startX = chunkX - range;
+    int endX = chunkX + range;
+    int startZ = chunkZ - range;
+    int endZ = chunkZ + range;
 
-    for (int dz = -range; dz <= range; ++dz) {
-        for (int dx = -range; dx <= range; ++dx) {
-            int cx = chunkX + dx;
-            int cz = chunkZ + dz;
-            
-            // Just store chunk coordinates; no scaling here in the CPU vertices
-            glm::vec2 chunkPos(cx * GRID_SIZE * GRID_SCALE, cz * GRID_SIZE * GRID_SCALE);
-
+    for (int z = startZ; z <= endZ; ++z) {
+        for (int x = startX; x <= endX; ++x) {
+            glm::vec2 chunkPos(x * GRID_SIZE * GRID_SCALE, z * GRID_SIZE * GRID_SCALE);
             std::vector<unsigned int> indices;
-            std::vector<Vertex> vertices = generateTerrain(GRID_SIZE, GRID_SCALE, HEIGHT_SCALE, indices, cx, cz);
+            std::vector<Vertex> vertices = generateTerrain(GRID_SIZE, GRID_SCALE, HEIGHT_SCALE, indices, x, z);
 
             GLuint terrainVAO = setupTerrainBuffers(vertices, indices);
             activeChunks.push_back({terrainVAO, (unsigned int)indices.size(), chunkPos});
         }
     }
 }
+
 
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, 
                                     std::vector<unsigned int>& indices, int chunkX, int chunkZ)
@@ -605,22 +613,24 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
 }
 
 void processInput(GLFWwindow *window) {
-    static float movementSpeed = 1.0f;
+    static float movementSpeed = 5.0f;
     glm::vec3 movement(0.0f);
 
+    glm::vec3 flatForward = glm::normalize(glm::vec3(forwardDirection.x, 0.0f, forwardDirection.z));
+    glm::vec3 flatRight = glm::normalize(glm::vec3(rightDirection.x, 0.0f, rightDirection.z));
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        movement.z -= movementSpeed;
+        movement += flatForward * movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        movement.z += movementSpeed;
+        movement -= flatForward * movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        movement.x -= movementSpeed;
+        movement -= flatRight * movementSpeed;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        movement.x += movementSpeed;
+        movement += flatRight * movementSpeed;
 
     eye_center += movement;
 
     float chunkSize = GRID_SIZE * GRID_SCALE;
-
     int newChunkX = static_cast<int>(std::floor(eye_center.x / chunkSize));
     int newChunkZ = static_cast<int>(std::floor(eye_center.z / chunkSize));
 
