@@ -431,26 +431,43 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
 
-    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, 0.0f, 50.0f));
-    modelMatrix = glm::rotate(modelMatrix, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f));
+    static float bladeRotation = 0.0f;
+    float rotationSpeed = 0.10f;
+    bladeRotation += glfwGetTime() * rotationSpeed;
+    bladeRotation = fmod(bladeRotation, 360.0f);
 
-    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelMatrix[0][0]);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
-    glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
-    glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
-    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+    glm::mat4 baseModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, -5.0f, 50.0f));
+    baseModelMatrix = glm::rotate(baseModelMatrix, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    baseModelMatrix = glm::scale(baseModelMatrix, glm::vec3(1.0f));
 
-    for (const auto &mesh : turbine.meshes) {
-        glBindVertexArray(mesh.VAO);
-        if (mesh.indexCount > 0) {
-            glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+    glm::vec3 bladeAttachmentPoint(0.0f, 70.0f, 0.0f);
+    glm::vec3 rotationCircleScale(0.5f, .5f, 0.5f);
+
+    for (size_t i = 0; i < turbine.meshes.size(); ++i) {
+        glm::mat4 modelMatrix = baseModelMatrix;
+
+        if (i == 16) {
+            modelMatrix = glm::translate(modelMatrix, bladeAttachmentPoint);
+            modelMatrix = glm::scale(modelMatrix, rotationCircleScale);
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f) / rotationCircleScale);
+            modelMatrix = glm::translate(modelMatrix, -bladeAttachmentPoint);
+        }
+
+        glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelMatrix[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+        glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
+        glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
+        glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+
+        glBindVertexArray(turbine.meshes[i].VAO);
+        if (turbine.meshes[i].indexCount > 0) {
+            glDrawElements(GL_TRIANGLES, turbine.meshes[i].indexCount, turbine.meshes[i].indexType, 0);
         } else {
-            glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+            glDrawArrays(GL_TRIANGLES, 0, turbine.meshes[i].vertexCount);
         }
     }
 }
-
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear(); 
