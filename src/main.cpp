@@ -9,7 +9,9 @@
 #include <render/shader.h>
 
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define TINYGLTF_IMPLEMENTATION
+#include <tinygltf-2.9.3/tiny_gltf.h>
 
 // Define Vertex structure
 struct Vertex {
@@ -18,13 +20,26 @@ struct Vertex {
     glm::vec2 TexCoords;
 };
 
+struct TurbineMesh {
+    GLuint VAO;
+    GLuint EBO;
+    GLsizei indexCount;
+    GLenum indexType; // GL_UNSIGNED_SHORT or GL_UNSIGNED_INT depending on the accessor
+    GLsizei vertexCount;
+};
+
+struct Turbine {
+    tinygltf::Model model;
+    std::vector<TurbineMesh> meshes;
+};
+
 // Constants
 const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
 
-glm::vec3 eye_center(50.0f, 50.0f, -50.0f);
-glm::vec3 lookat(50.0f, 0.0f, 50.0f);
+glm::vec3 eye_center(50.0f, 100.0f, -150.0f);
+glm::vec3 lookat(50.0f, 50.0f, 50.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
 glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                        
@@ -47,6 +62,122 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
 void updateChunks(int chunkX, int chunkZ);
 void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture);
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
+void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
+
+Turbine loadTurbine(const char* path) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    bool success = loader.LoadBinaryFromFile(&model, &err, &warn, path);
+    if (!warn.empty()) {
+        std::cerr << "Warning: " << warn << std::endl;
+    }
+    if (!success) {
+        std::cerr << "Failed to load turbine model: " << err << std::endl;
+        return {}; 
+    }
+
+    std::vector<TurbineMesh> turbineMeshes;
+
+    for (const auto& mesh : model.meshes) {
+        for (const auto& primitive : mesh.primitives) {
+            GLuint vao;
+            glGenVertexArrays(1, &vao);
+            glBindVertexArray(vao);
+
+            // Setup attributes
+            for (auto& attrib : primitive.attributes) {
+                const auto& accessor = model.accessors[attrib.second];
+                const auto& bufferView = model.bufferViews[accessor.bufferView];
+                const auto& buffer = model.buffers[bufferView.buffer];
+
+                GLuint vbo;
+                glGenBuffers(1, &vbo);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, bufferView.byteLength,
+                             &buffer.data[bufferView.byteOffset], GL_STATIC_DRAW);
+
+                GLint attribLocation = -1;
+                if (attrib.first == "POSITION") attribLocation = 0;
+                if (attrib.first == "NORMAL") attribLocation = 1;
+                if (attrib.first == "TEXCOORD_0") attribLocation = 2;
+
+                if (attribLocation >= 0) {
+                    int componentCount = 0;
+                    switch (accessor.type) {
+                        case TINYGLTF_TYPE_VEC2: componentCount = 2; break;
+                        case TINYGLTF_TYPE_VEC3: componentCount = 3; break;
+                        case TINYGLTF_TYPE_VEC4: componentCount = 4; break;
+                        case TINYGLTF_TYPE_SCALAR: componentCount = 1; break;
+                        default: break;
+                    }
+
+                    glEnableVertexAttribArray(attribLocation);
+                    glVertexAttribPointer(
+                        attribLocation,
+                        componentCount,
+                        accessor.componentType,
+                        accessor.normalized ? GL_TRUE : GL_FALSE,
+                        int(accessor.ByteStride(bufferView)),
+                        (void*)(uintptr_t)accessor.byteOffset
+                    );
+                }
+            }
+
+            // Prepare the TurbineMesh struct
+            TurbineMesh tmesh;
+            tmesh.VAO = vao;
+            tmesh.EBO = 0;
+            tmesh.indexCount = 0;
+            tmesh.indexType = GL_UNSIGNED_INT;
+            tmesh.vertexCount = 0;
+
+            if (primitive.indices >= 0) {
+                // Indexed geometry setup
+                const auto& indexAccessor = model.accessors[primitive.indices];
+                const auto& bufferView = model.bufferViews[indexAccessor.bufferView];
+                const auto& buffer = model.buffers[bufferView.buffer];
+
+                GLuint ebo;
+                glGenBuffers(1, &ebo);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, bufferView.byteLength, &buffer.data[bufferView.byteOffset], GL_STATIC_DRAW);
+
+                GLsizei indexCount = static_cast<GLsizei>(indexAccessor.count);
+                GLenum indexType = GL_UNSIGNED_INT;
+
+                if (indexAccessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_SHORT) {
+                    indexType = GL_UNSIGNED_SHORT;
+                } else if (indexAccessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_INT) {
+                    indexType = GL_UNSIGNED_INT;
+                } else if (indexAccessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_BYTE) {
+                    indexType = GL_UNSIGNED_BYTE;
+                }
+
+                tmesh.EBO = ebo;
+                tmesh.indexCount = indexCount;
+                tmesh.indexType = indexType;
+            } else {
+                // Non-indexed geometry
+                int positionIndex = primitive.attributes.at("POSITION");
+                const auto& positionAccessor = model.accessors[positionIndex];
+                GLsizei vertexCount = static_cast<GLsizei>(positionAccessor.count);
+                tmesh.vertexCount = vertexCount;
+            }
+
+            turbineMeshes.push_back(tmesh);
+
+            glBindVertexArray(0);
+        }
+    }
+
+    Turbine turbine;
+    turbine.model = model;
+    turbine.meshes = turbineMeshes;
+    return turbine;
+}
+
 
 GLuint loadTexture(const char* path) {
     GLuint textureID;
@@ -207,6 +338,12 @@ int main() {
         return -1;
     }
 
+    GLuint turbineShader = LoadShadersFromFile("../src/shader/turbine.vert", "../src/shader/turbine.frag");
+    if (turbineShader == 0) {
+        std::cerr << "Failed to load turbine shaders." << std::endl;
+        return -1;
+    }
+
     GLuint sunVAO = createSunVAO();
 
     updateChunks(currentChunkX, currentChunkZ);
@@ -215,6 +352,9 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.5f, 0.7f, 1.0f, 1.0f); 
+
+    Turbine turbine = loadTurbine("../src/model/turbine/Turbine.glb");
+
 
         while (!glfwWindowShouldClose(window)) {
         processInput(window);  // Handle input
@@ -227,6 +367,8 @@ int main() {
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
 
         renderSun(sunLightingShader, sunVAO, vpMatrix);
+
+        renderTurbine(turbine, turbineShader, vpMatrix);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -286,6 +428,28 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glDrawElements(GL_TRIANGLES, 36 * 18 * 6, GL_UNSIGNED_INT, 0);
 }
 
+void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
+    glUseProgram(shader);
+
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, 0.0f, 50.0f));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f));
+
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelMatrix[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+    glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
+    glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
+    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+
+    for (const auto &mesh : turbine.meshes) {
+        glBindVertexArray(mesh.VAO);
+        if (mesh.indexCount > 0) {
+            glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+        }
+    }
+}
 
 
 void updateChunks(int chunkX, int chunkZ) {
