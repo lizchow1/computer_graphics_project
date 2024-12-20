@@ -49,6 +49,9 @@ float zFar = 5000.0f;
 glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
 glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));
 float cameraViewDistance = glm::length(lookat - eye_center);
+std::vector<glm::mat4> turbineInstances;
+GLuint instanceVBO;
+const int NUM_TURBINES = 20;
 
 // Global chunk coordinates
 int currentChunkX = 0;
@@ -63,6 +66,7 @@ void updateChunks(int chunkX, int chunkZ);
 void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture);
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
+void generateTurbineInstances();
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -355,21 +359,39 @@ int main() {
 
     Turbine turbine = loadTurbine("../src/model/turbine/Turbine.glb");
 
-
-        while (!glfwWindowShouldClose(window)) {
-        processInput(window);  // Handle input
-
+    generateTurbineInstances();
+    
+    glGenBuffers(1, &instanceVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, turbineInstances.size() * sizeof(glm::mat4), &turbineInstances[0], GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    
+    for (auto& tmesh : turbine.meshes) {
+        glBindVertexArray(tmesh.VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    
+        std::size_t vec4Size = sizeof(glm::vec4);
+        for (int i = 0; i < 4; i++) {
+            glEnableVertexAttribArray(3 + i);
+            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(i * vec4Size));
+            glVertexAttribDivisor(3 + i, 1);
+        }
+    
+        glBindVertexArray(0);
+    }
+    
+    while (!glfwWindowShouldClose(window)) {
+        processInput(window);  
+    
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
-
+    
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
+    
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
-
         renderSun(sunLightingShader, sunVAO, vpMatrix);
-
         renderTurbine(turbine, turbineShader, vpMatrix);
-
+    
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -431,41 +453,54 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
 
+    static double lastTime = glfwGetTime();
+    double currentTime = glfwGetTime();
+    float deltaTime = float(currentTime - lastTime);
+    lastTime = currentTime;
+
     static float bladeRotation = 0.0f;
-    float rotationSpeed = 0.10f;
-    bladeRotation += glfwGetTime() * rotationSpeed;
+    float rotationSpeed = 20.0f;
+    bladeRotation += deltaTime * rotationSpeed;
     bladeRotation = fmod(bladeRotation, 360.0f);
 
-    glm::mat4 baseModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, -5.0f, 50.0f));
-    baseModelMatrix = glm::rotate(baseModelMatrix, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    baseModelMatrix = glm::scale(baseModelMatrix, glm::vec3(1.0f));
-
-    glm::vec3 bladeAttachmentPoint(0.0f, 70.0f, 0.0f);
-    glm::vec3 rotationCircleScale(0.5f, .5f, 0.5f);
+    glm::mat4 bladeRotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+    
+    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+    glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
+    glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
+    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
 
     for (size_t i = 0; i < turbine.meshes.size(); ++i) {
-        glm::mat4 modelMatrix = baseModelMatrix;
+        bool isBladeMesh = (i == 16);
 
-        if (i == 16) {
-            modelMatrix = glm::translate(modelMatrix, bladeAttachmentPoint);
-            modelMatrix = glm::scale(modelMatrix, rotationCircleScale);
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f) / rotationCircleScale);
-            modelMatrix = glm::translate(modelMatrix, -bladeAttachmentPoint);
-        }
-
-        glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelMatrix[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
-        glUniform3f(glGetUniformLocation(shader, "lightColor"), 1.0f, 1.0f, 1.0f);
-        glUniform3f(glGetUniformLocation(shader, "lightDir"), -1.0f, -1.0f, -1.0f);
-        glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+        glUniform1i(glGetUniformLocation(shader, "isBlade"), isBladeMesh ? 1 : 0);
+        glUniformMatrix4fv(glGetUniformLocation(shader, "bladeRotationMatrix"), 1, GL_FALSE, &bladeRotationMatrix[0][0]);
 
         glBindVertexArray(turbine.meshes[i].VAO);
+
         if (turbine.meshes[i].indexCount > 0) {
-            glDrawElements(GL_TRIANGLES, turbine.meshes[i].indexCount, turbine.meshes[i].indexType, 0);
+            glDrawElementsInstanced(GL_TRIANGLES, turbine.meshes[i].indexCount, turbine.meshes[i].indexType, 0, NUM_TURBINES);
         } else {
-            glDrawArrays(GL_TRIANGLES, 0, turbine.meshes[i].vertexCount);
+            glDrawArraysInstanced(GL_TRIANGLES, 0, turbine.meshes[i].vertexCount, NUM_TURBINES);
         }
+    }
+}
+
+void generateTurbineInstances() {
+    turbineInstances.clear();
+    turbineInstances.reserve(NUM_TURBINES);
+
+    srand(42);
+    for (int i = 0; i < NUM_TURBINES; i++) {
+        float x = (rand() % 1000) - 500.0f;
+        float z = (rand() % 1000) - 500.0f;
+        float y = 0.0f; // You could sample the terrain height if needed
+
+        float angle = glm::radians((float)(rand() % 360));
+
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+        model = glm::rotate(model, angle, glm::vec3(0,1,0));
+        turbineInstances.push_back(model);
     }
 }
 
