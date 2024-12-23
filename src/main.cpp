@@ -13,7 +13,6 @@
 #define TINYGLTF_IMPLEMENTATION
 #include <tinygltf-2.9.3/tiny_gltf.h>
 
-// Define Vertex structure
 struct Vertex {
     glm::vec3 Position;
     glm::vec3 Normal;
@@ -24,7 +23,7 @@ struct TurbineMesh {
     GLuint VAO;
     GLuint EBO;
     GLsizei indexCount;
-    GLenum indexType; // GL_UNSIGNED_SHORT or GL_UNSIGNED_INT depending on the accessor
+    GLenum indexType; 
     GLsizei vertexCount;
 };
 
@@ -33,42 +32,70 @@ struct Turbine {
     std::vector<TurbineMesh> meshes;
 };
 
+struct SolarPanelMesh {
+    GLuint VAO;
+    GLuint EBO;
+    GLsizei indexCount;
+    GLenum indexType;
+    GLsizei vertexCount;
+};
+
+struct SolarPanel {
+    tinygltf::Model model;
+    std::vector<SolarPanelMesh> meshes;
+};
+
+struct Chunk {
+    GLuint VAO;
+    unsigned int indexCount;
+    glm::vec2 position;  
+};
+
+
 // Constants
 const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
+const int NUM_TURBINES = 20;
 
-glm::vec3 eye_center(100.0f, 200.0f, 0.0f);
+glm::vec3 eye_center(0.0f, 150.0f, -100.0f);
 glm::vec3 lookat(0.0f, 300.0f, 400.0f);
 glm::vec3 up(0.0f, 1.0f, 0.0f);
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
-glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                        
+glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                    
+glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
+glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));    
 float FoV = 75.0f;
 float zNear = 0.1f;
-float zFar = 5000.0f;
-glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
-glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));
+float zFar = 4000.0f;
 float cameraViewDistance = glm::length(lookat - eye_center);
 std::vector<glm::mat4> turbineInstances;
+std::vector<Chunk> activeChunks;
+std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
+std::vector<glm::mat4> solarPanelInstances;
+GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
 GLuint instanceVBO;
-const int NUM_TURBINES = 20;
+GLuint solarPanelInstanceVBO;
+GLuint baseColor, normalMap, metallicMap, roughnessMap;
+GLuint aoMap, heightMap, emissiveMap, opacityMap, specularMap;
 static float lastFrameTime = 0.0f; 
 static float deltaTime = 0.0f;
-
-// Global chunk coordinates
 int currentChunkX = 0;
 int currentChunkZ = 0;
 
 // Function prototypes
 void processInput(GLFWwindow *window, float deltaTime);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
-std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
-GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
 void updateChunks(int chunkX, int chunkZ);
 void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture);
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
 void generateTurbineInstances();
+void generateSolarPanelInstances(int rows, int cols, float spacing);
+// void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix);
+void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
+                       GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
+                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -108,6 +135,10 @@ Turbine loadTurbine(const char* path) {
                 if (attrib.first == "POSITION") attribLocation = 0;
                 if (attrib.first == "NORMAL") attribLocation = 1;
                 if (attrib.first == "TEXCOORD_0") attribLocation = 2;
+                if (attrib.first == "TEXCOORD_1") {
+                    std::cerr << "Warning: TEXCOORD_1 is present but ignored." << std::endl;
+                    continue; // Skip TEXCOORD_1
+                }
 
                 if (attribLocation >= 0) {
                     int componentCount = 0;
@@ -184,6 +215,125 @@ Turbine loadTurbine(const char* path) {
     return turbine;
 }
 
+SolarPanel loadSolarPanel(const char* path) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    // Load the GLTF model from file
+    bool success = loader.LoadBinaryFromFile(&model, &err, &warn, path);
+    if (!warn.empty()) {
+        std::cerr << "Warning: " << warn << std::endl;
+    }
+    if (!success) {
+        std::cerr << "Failed to load solar panel model: " << err << std::endl;
+        return {};
+    }
+
+    std::vector<SolarPanelMesh> solarPanelMeshes;
+
+    // Iterate over the meshes in the GLTF model
+    for (const auto& mesh : model.meshes) {
+        for (const auto& primitive : mesh.primitives) {
+            GLuint vao;
+            glGenVertexArrays(1, &vao);
+            glBindVertexArray(vao);
+
+            // Bind the vertex attributes
+            for (auto& attrib : primitive.attributes) {
+                const auto& accessor = model.accessors[attrib.second];
+                const auto& bufferView = model.bufferViews[accessor.bufferView];
+                const auto& buffer = model.buffers[bufferView.buffer];
+
+                GLuint vbo;
+                glGenBuffers(1, &vbo);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, bufferView.byteLength,
+                             &buffer.data[bufferView.byteOffset], GL_STATIC_DRAW);
+
+                GLint attribLocation = -1;
+                if (attrib.first == "POSITION") attribLocation = 0;
+                if (attrib.first == "NORMAL") attribLocation = 1;
+                if (attrib.first == "TEXCOORD_0") attribLocation = 2;
+                if (attrib.first == "TEXCOORD_1") attribLocation = 3;
+
+                if (attribLocation >= 0) {
+                    int componentCount = 0;
+                    switch (accessor.type) {
+                        case TINYGLTF_TYPE_VEC2: componentCount = 2; break;
+                        case TINYGLTF_TYPE_VEC3: componentCount = 3; break;
+                        case TINYGLTF_TYPE_VEC4: componentCount = 4; break;
+                        default: 
+                            std::cerr << "Unsupported accessor type for attribute " << attrib.first << std::endl;
+                            continue;
+                    }
+
+                    glEnableVertexAttribArray(attribLocation);
+                    glVertexAttribPointer(
+                        attribLocation,
+                        componentCount,
+                        accessor.componentType,
+                        accessor.normalized ? GL_TRUE : GL_FALSE,
+                        accessor.ByteStride(bufferView) > 0 ? accessor.ByteStride(bufferView) : componentCount * sizeof(float),
+                        (void*)(uintptr_t)accessor.byteOffset
+                    );
+                } else {
+                    std::cerr << "Unrecognized attribute: " << attrib.first << std::endl;
+                }
+            }
+
+            // Prepare the SolarPanelMesh struct
+            SolarPanelMesh spMesh = {vao, 0, 0, GL_UNSIGNED_INT, 0};
+
+            // Handle indices for indexed geometry
+            if (primitive.indices >= 0) {
+                const auto& indexAccessor = model.accessors[primitive.indices];
+                const auto& bufferView = model.bufferViews[indexAccessor.bufferView];
+                const auto& buffer = model.buffers[bufferView.buffer];
+
+                GLuint ebo;
+                glGenBuffers(1, &ebo);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, bufferView.byteLength,
+                             &buffer.data[bufferView.byteOffset], GL_STATIC_DRAW);
+
+                spMesh.EBO = ebo;
+                spMesh.indexCount = indexAccessor.count;
+
+                // Determine index type
+                switch (indexAccessor.componentType) {
+                    case TINYGLTF_PARAMETER_TYPE_UNSIGNED_BYTE:
+                        spMesh.indexType = GL_UNSIGNED_BYTE;
+                        break;
+                    case TINYGLTF_PARAMETER_TYPE_UNSIGNED_SHORT:
+                        spMesh.indexType = GL_UNSIGNED_SHORT;
+                        break;
+                    case TINYGLTF_PARAMETER_TYPE_UNSIGNED_INT:
+                        spMesh.indexType = GL_UNSIGNED_INT;
+                        break;
+                    default:
+                        std::cerr << "Unsupported index component type in GLTF file." << std::endl;
+                        break;
+                }
+            } else {
+                // Non-indexed geometry
+                const auto& positionAccessor = model.accessors[primitive.attributes.at("POSITION")];
+                spMesh.vertexCount = positionAccessor.count;
+            }
+
+            solarPanelMeshes.push_back(spMesh);
+
+            glBindVertexArray(0); // Unbind the VAO
+        }
+    }
+
+    SolarPanel solarPanel;
+    solarPanel.model = model;
+    solarPanel.meshes = solarPanelMeshes;
+
+    return solarPanel;
+}
+
 
 GLuint loadTexture(const char* path) {
     GLuint textureID;
@@ -210,14 +360,6 @@ GLuint loadTexture(const char* path) {
     }
     return textureID;
 }
-
-struct Chunk {
-    GLuint VAO;
-    unsigned int indexCount;
-    glm::vec2 position;  
-};
-
-std::vector<Chunk> activeChunks;
 
 void generateSphere(float radius, int sectorCount, int stackCount, 
                     std::vector<float>& vertexData, 
@@ -265,7 +407,6 @@ void generateSphere(float radius, int sectorCount, int stackCount,
     }
 }
 
-
 GLuint createSunVAO() {
     std::vector<float> vertexData;
     std::vector<unsigned int> indices;
@@ -300,6 +441,32 @@ GLuint createSunVAO() {
     return VAO;
 }
 
+GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices) {
+    GLuint VAO, VBO, EBO;
+
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
+
+    glBindVertexArray(0);
+
+    return VAO;
+}
 
 int main() {
     if (!glfwInit()) {
@@ -333,6 +500,60 @@ int main() {
         return -1;
     }
 
+    GLuint baseColor = loadTexture("../src/utils/Solar Panel_Solar panel_BaseColor_4.png");
+    if (baseColor == 0) {
+        std::cerr << "Failed to load Base Color texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint normalMap = loadTexture("../src/utils/Solar Panel_Solar panel_Normal_3.png");
+    if (normalMap == 0) {
+        std::cerr << "Failed to load Normal Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint metallicMap = loadTexture("../src/utils/Solar_panel_stand_Solar_Material.001_Metallic-Solar_panel_st.png");
+    if (metallicMap == 0) {
+        std::cerr << "Failed to load Metallic Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint roughnessMap = loadTexture("../src/utils/Solar_panel_stand_Solar_Material.001_Normal_0.png");
+    if (roughnessMap == 0) {
+        std::cerr << "Failed to load Roughness Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint aoMap = loadTexture("../src/utils/Solar_panel_stand_Solar_Material.001_BaseColor_1.png");
+    if (aoMap == 0) {
+        std::cerr << "Failed to load Ambient Occlusion (AO) texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint heightMap = loadTexture("../src/utils/Solar Panel_Stand_BaseColor_7.png");
+    if (heightMap == 0) {
+        std::cerr << "Failed to load Height Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint emissiveMap = loadTexture("../src/utils/Solar:metallic_texture-Solar:roughness_texture_5@channels=B.png");
+    if (emissiveMap == 0) {
+        std::cerr << "Failed to load Emissive Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint opacityMap = loadTexture("../src/utils/Solar:metallic_texture-Solar:roughness_texture_5@channels=G.png");
+    if (opacityMap == 0) {
+        std::cerr << "Failed to load Opacity Map texture!" << std::endl;
+        return -1;
+    }
+
+    GLuint specularMap = loadTexture("../src/utils/Solar Panel_Stand_Metallic-Solar Panel_Stand_Roughness_8@cha.png");
+    if (specularMap == 0) {
+        std::cerr << "Failed to load Specular Map texture!" << std::endl;
+        return -1;
+    }
+
     GLuint terrainShader = LoadShadersFromFile("../src/shader/terrain.vert", "../src/shader/terrain.frag");
     if (terrainShader == 0) {
         std::cerr << "Failed to load terrain shaders." << std::endl;
@@ -351,6 +572,12 @@ int main() {
         return -1;
     }
 
+    GLuint solarPanelShader = LoadShadersFromFile("../src/shader/solarPanel.vert", "../src/shader/solarPanel.frag");
+    if (solarPanelShader == 0) {
+        std::cerr << "Failed to load solar panel shaders." << std::endl;
+        return -1;
+    }
+
     GLuint sunVAO = createSunVAO();
 
     updateChunks(currentChunkX, currentChunkZ);
@@ -358,11 +585,13 @@ int main() {
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); 
 
     Turbine turbine = loadTurbine("../src/model/turbine/Turbine.glb");
 
+    SolarPanel solarPanel = loadSolarPanel("../src/model/solarpanel/SolarPanel.glb");
+
     generateTurbineInstances();
+    generateSolarPanelInstances(1, 1, 20.0f);
 
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -383,6 +612,26 @@ int main() {
         glBindVertexArray(0);
     }
 
+    glGenBuffers(1, &solarPanelInstanceVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, solarPanelInstances.size() * sizeof(glm::mat4), &solarPanelInstances[0], GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // Attach instance VBO to each solar panel mesh
+    for (auto& mesh : solarPanel.meshes) {
+        glBindVertexArray(mesh.VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
+
+        for (int i = 0; i < 4; i++) {
+            glEnableVertexAttribArray(3 + i);
+            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(i * sizeof(glm::vec4)));
+            glVertexAttribDivisor(3 + i, 1);
+        }
+        glBindVertexArray(0);
+    }
+
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); 
+
     while (!glfwWindowShouldClose(window)) {
         float currentFrameTime = glfwGetTime();
         deltaTime = currentFrameTime - lastFrameTime;
@@ -394,9 +643,14 @@ int main() {
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
-        renderSun(sunLightingShader, sunVAO, vpMatrix);
-        renderTurbine(turbine, turbineShader, vpMatrix);
+        // renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
+        // renderSun(sunLightingShader, sunVAO, vpMatrix);
+        // renderTurbine(turbine, turbineShader, vpMatrix);
+        // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix);
+        renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, 
+                  baseColor, normalMap, metallicMap, roughnessMap,
+                  aoMap, heightMap, emissiveMap, opacityMap, specularMap);
+
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -499,6 +753,95 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
     }
 }
 
+// void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix) {
+//     glUseProgram(shader);
+
+//     GLint vpMatrixLoc = glGetUniformLocation(shader, "vpMatrix");
+//     if (vpMatrixLoc >= 0) {
+//         glUniformMatrix4fv(vpMatrixLoc, 1, GL_FALSE, &vpMatrix[0][0]);
+//     } else {
+//         std::cerr << "vpMatrix uniform not found!" << std::endl;
+//     }
+
+//     for (const auto& mesh : solarPanel.meshes) {
+//         if (mesh.VAO == 0) {
+//             std::cerr << "Invalid VAO for solar panel mesh!" << std::endl;
+//             continue;
+//         }
+//         glBindVertexArray(mesh.VAO);
+
+//         if (mesh.indexCount > 0) {
+//             glDrawElementsInstanced( GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0, static_cast<GLsizei>(solarPanelInstances.size()));
+//         } else if (mesh.vertexCount > 0) {
+//             glDrawArraysInstanced(GL_TRIANGLES,0,mesh.vertexCount,static_cast<GLsizei>(solarPanelInstances.size()));
+//         } else {
+//             std::cerr << "Invalid draw call for solar panel mesh!" << std::endl;
+//         }
+//     }
+//     glBindVertexArray(0);
+// }
+
+void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
+                       GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
+                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap) {
+    glUseProgram(shader);
+
+    glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, &eye_center[0]);
+    glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
+
+    // Pass the VP matrix
+    GLint vpMatrixLoc = glGetUniformLocation(shader, "vpMatrix");
+    glUniformMatrix4fv(vpMatrixLoc, 1, GL_FALSE, &vpMatrix[0][0]);
+
+    // Bind textures and set uniforms
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, baseColor);
+    glUniform1i(glGetUniformLocation(shader, "baseColorMap"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, normalMap);
+    glUniform1i(glGetUniformLocation(shader, "normalMap"), 1);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, metallicMap);
+    glUniform1i(glGetUniformLocation(shader, "metallicMap"), 2);
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, roughnessMap);
+    glUniform1i(glGetUniformLocation(shader, "roughnessMap"), 3);
+
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, aoMap);
+    glUniform1i(glGetUniformLocation(shader, "aoMap"), 4);
+
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, heightMap);
+    glUniform1i(glGetUniformLocation(shader, "heightMap"), 5);
+
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, emissiveMap);
+    glUniform1i(glGetUniformLocation(shader, "emissiveMap"), 6);
+
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, opacityMap);
+    glUniform1i(glGetUniformLocation(shader, "opacityMap"), 7);
+
+    glActiveTexture(GL_TEXTURE8);
+    glBindTexture(GL_TEXTURE_2D, specularMap);
+    glUniform1i(glGetUniformLocation(shader, "specularMap"), 8);
+
+    // Render each mesh
+    for (const auto& mesh : solarPanel.meshes) {
+        glBindVertexArray(mesh.VAO);
+        if (mesh.indexCount > 0) {
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0, static_cast<GLsizei>(solarPanelInstances.size()));
+        } else {
+            glDrawArraysInstanced(GL_TRIANGLES, 0, mesh.vertexCount, static_cast<GLsizei>(solarPanelInstances.size()));
+        }
+    }
+}
+
 
 void generateTurbineInstances() {
     turbineInstances.clear();
@@ -508,7 +851,7 @@ void generateTurbineInstances() {
     for (int i = 0; i < NUM_TURBINES; i++) {
         float x = (rand() % 1000);
         float z = (rand() % 1000);
-        float y = 0.0f; // You could sample the terrain height if needed
+        float y = 0.0f; 
 
         float angle = glm::radians((float)(rand() % 360));
 
@@ -517,6 +860,34 @@ void generateTurbineInstances() {
         turbineInstances.push_back(model);
     }
 }
+
+void generateSolarPanelInstances(int rows, int cols, float spacing) {
+    solarPanelInstances.clear();
+    float startX = -(rows * spacing) / 2.0f;  // Center the array
+    float startZ = 200.0f;  // Position panels along positive Z-axis to match camera direction
+    
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            glm::mat4 model = glm::mat4(1.0f);
+
+            // Position
+            float x = startX + (i * spacing);
+            float z = startZ + (j * spacing);
+            model = glm::translate(model, glm::vec3(x, 0.0f, z));
+
+            // Rotation - tilt panels towards sun
+            model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::rotate(model, glm::radians(-30.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // Adjust tilt angle as needed
+
+
+            solarPanelInstances.push_back(model);
+        }
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, solarPanelInstances.size() * sizeof(glm::mat4), solarPanelInstances.data(), GL_STATIC_DRAW);
+}
+
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear(); 
@@ -589,33 +960,6 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
     }
 
     return vertices;
-}
-
-GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices) {
-    GLuint VAO, VBO, EBO;
-
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-
-    glBindVertexArray(VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
-
-    glBindVertexArray(0);
-
-    return VAO;
 }
 
 void processInput(GLFWwindow *window, float deltaTime) {
