@@ -644,7 +644,7 @@ int main() {
 
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         // renderSun(sunLightingShader, sunVAO, vpMatrix);
-        // renderTurbine(turbine, turbineShader, vpMatrix);
+        renderTurbine(turbine, turbineShader, vpMatrix);
         // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
 
 
