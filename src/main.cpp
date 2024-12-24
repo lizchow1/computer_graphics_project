@@ -55,7 +55,7 @@ struct Chunk {
 // Constants
 const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
-const float HEIGHT_SCALE = 10.0f;
+const float HEIGHT_SCALE = 50.0f;
 const int NUM_TURBINES = 20;
 
 glm::vec3 eye_center(0.0f, 50.0f, 750.0f);  
@@ -478,7 +478,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window = glfwCreateWindow(1024, 768, "Infinite Terrain", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(1024, 768, "Towards a Futuristic Emerald Isle", NULL, NULL);
     if (window == NULL) {
         std::cerr << "Failed to open a GLFW window." << std::endl;
         glfwTerminate();
@@ -885,8 +885,12 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
     vertices.reserve((gridSize + 1) * (gridSize + 1));
     
     FastNoiseLite noise;
-    noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-    noise.SetFrequency(0.05f);
+    noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    noise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    noise.SetFractalOctaves(6);
+    noise.SetFrequency(0.02f);
+    noise.SetFractalLacunarity(2.0f);
+    noise.SetFractalGain(0.5f);
 
     float worldOffsetX = chunkX * (float)gridSize * gridScale;
     float worldOffsetZ = chunkZ * (float)gridSize * gridScale;
@@ -899,7 +903,16 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
             float globalX = worldOffsetX + localX;
             float globalZ = worldOffsetZ + localZ;
 
-            float height = noise.GetNoise(globalX, globalZ) * heightScale;
+            float lowFrequencyNoise = noise.GetNoise(globalX * 0.05f, globalZ * 0.05f);
+            float midFrequencyNoise = noise.GetNoise(globalX * 0.2f, globalZ * 0.2f);
+            float highFrequencyNoise = noise.GetNoise(globalX * 0.8f, globalZ * 0.8f);
+
+            float biomeFactor = (noise.GetNoise(globalX * 0.01f, globalZ * 0.01f) + 1.0f) / 2.0f;
+            float biomeHeightScale = glm::mix(20.0f, 60.0f, biomeFactor);
+
+            float height = ((lowFrequencyNoise * 0.5f + 
+                             midFrequencyNoise * 0.3f + 
+                             highFrequencyNoise * 0.2f) + 1.0f) * 0.5f * biomeHeightScale;
 
             Vertex vertex;
             vertex.Position = glm::vec3(localX, height, localZ);
@@ -915,12 +928,13 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
         for (unsigned int x = 0; x < gridSize; ++x) {
             unsigned int topLeft = z * (gridSize + 1) + x;
             unsigned int topRight = topLeft + 1;
-            unsigned int bottomLeft = (z + 1)*(gridSize + 1) + x;
+            unsigned int bottomLeft = (z + 1) * (gridSize + 1) + x;
             unsigned int bottomRight = bottomLeft + 1;
 
             indices.push_back(topLeft);
             indices.push_back(bottomLeft);
             indices.push_back(topRight);
+
             indices.push_back(topRight);
             indices.push_back(bottomLeft);
             indices.push_back(bottomRight);
