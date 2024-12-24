@@ -58,17 +58,17 @@ const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 10.0f;
 const int NUM_TURBINES = 20;
 
-glm::vec3 eye_center(0.0f, 150.0f, -100.0f);
-glm::vec3 lookat(0.0f, 300.0f, 400.0f);
-glm::vec3 up(0.0f, 1.0f, 0.0f);
+glm::vec3 eye_center(0.0f, 50.0f, 750.0f);  
+glm::vec3 lookat(750.0f, 0.0f, 751.0f);       
+glm::vec3 up(0.0f, 1.0f, 0.0f); 
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
 glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                    
 glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
 glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));    
-float FoV = 75.0f;
+float FoV = 30.0f; 
 float zNear = 0.1f;
-float zFar = 4000.0f;
-float cameraViewDistance = glm::length(lookat - eye_center);
+float zFar = 1000.0f;
+float cameraViewDistance = 50.0f;
 std::vector<glm::mat4> turbineInstances;
 std::vector<Chunk> activeChunks;
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
@@ -642,12 +642,10 @@ int main() {
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
+        renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         // renderSun(sunLightingShader, sunVAO, vpMatrix);
         // renderTurbine(turbine, turbineShader, vpMatrix);
-        renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, 
-                  baseColor, normalMap, metallicMap, roughnessMap,
-                  aoMap, heightMap, emissiveMap, opacityMap, specularMap);
+        // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
 
 
         glfwSwapBuffers(window);
@@ -940,13 +938,13 @@ void processInput(GLFWwindow *window, float deltaTime) {
     glm::vec3 flatForward = glm::normalize(glm::vec3(forwardDirection.x, 0.0f, forwardDirection.z));
     glm::vec3 flatRight = glm::normalize(glm::vec3(rightDirection.x, 0.0f, rightDirection.z));
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
         movement += flatForward * movementSpeed;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
         movement -= flatForward * movementSpeed;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
         movement -= flatRight * movementSpeed;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
         movement += flatRight * movementSpeed;
 
     eye_center += movement;
