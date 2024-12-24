@@ -856,10 +856,9 @@ void generateSolarPanelInstances(int rows, int cols, float spacing) {
     glBufferData(GL_ARRAY_BUFFER, solarPanelInstances.size() * sizeof(glm::mat4), solarPanelInstances.data(), GL_STATIC_DRAW);
 }
 
-
 void updateChunks(int chunkX, int chunkZ) {
-    activeChunks.clear(); 
-    int range = 15;
+    activeChunks.clear();  // Clear the currently loaded chunks
+    int range = 5;  // Load fewer chunks to optimize performance
     int startX = chunkX - range;
     int endX = chunkX + range;
     int startZ = chunkZ - range;
@@ -876,6 +875,7 @@ void updateChunks(int chunkX, int chunkZ) {
         }
     }
 }
+
 
 
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, 
