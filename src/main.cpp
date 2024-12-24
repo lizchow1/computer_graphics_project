@@ -92,7 +92,6 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
 void generateTurbineInstances();
 void generateSolarPanelInstances(int rows, int cols, float spacing);
-// void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix);
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
@@ -646,7 +645,6 @@ int main() {
         // renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         // renderSun(sunLightingShader, sunVAO, vpMatrix);
         // renderTurbine(turbine, turbineShader, vpMatrix);
-        // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix);
         renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, 
                   baseColor, normalMap, metallicMap, roughnessMap,
                   aoMap, heightMap, emissiveMap, opacityMap, specularMap);
@@ -752,34 +750,6 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
         }
     }
 }
-
-// void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix) {
-//     glUseProgram(shader);
-
-//     GLint vpMatrixLoc = glGetUniformLocation(shader, "vpMatrix");
-//     if (vpMatrixLoc >= 0) {
-//         glUniformMatrix4fv(vpMatrixLoc, 1, GL_FALSE, &vpMatrix[0][0]);
-//     } else {
-//         std::cerr << "vpMatrix uniform not found!" << std::endl;
-//     }
-
-//     for (const auto& mesh : solarPanel.meshes) {
-//         if (mesh.VAO == 0) {
-//             std::cerr << "Invalid VAO for solar panel mesh!" << std::endl;
-//             continue;
-//         }
-//         glBindVertexArray(mesh.VAO);
-
-//         if (mesh.indexCount > 0) {
-//             glDrawElementsInstanced( GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0, static_cast<GLsizei>(solarPanelInstances.size()));
-//         } else if (mesh.vertexCount > 0) {
-//             glDrawArraysInstanced(GL_TRIANGLES,0,mesh.vertexCount,static_cast<GLsizei>(solarPanelInstances.size()));
-//         } else {
-//             std::cerr << "Invalid draw call for solar panel mesh!" << std::endl;
-//         }
-//     }
-//     glBindVertexArray(0);
-// }
 
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
