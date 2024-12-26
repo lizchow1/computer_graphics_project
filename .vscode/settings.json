@@ -52,6 +52,9 @@
         "unordered_map": "cpp",
         "valarray": "cpp",
         "variant": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "charconv": "cpp",
+        "deque": "cpp",
+        "queue": "cpp"
     }
 }

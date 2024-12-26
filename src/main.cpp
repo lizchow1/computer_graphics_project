@@ -58,16 +58,16 @@ const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 50.0f;
 const int NUM_TURBINES = 20;
 
-glm::vec3 eye_center(0.0f, 50.0f, 750.0f);  
+glm::vec3 eye_center(0.0f, 50.0f, 1500.0f);  
 glm::vec3 lookat(750.0f, 0.0f, 751.0f);       
 glm::vec3 up(0.0f, 1.0f, 0.0f); 
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
-glm::vec3 sunlightColor = glm::vec3(1.0f, 1.0f, 0.9f);                    
+glm::vec3 sunlightColor = glm::vec3(1.0f, 0.9f, 0.7f);                   
 glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
 glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));    
-float FoV = 30.0f; 
+float FoV = 45.0f; 
 float zNear = 0.1f;
-float zFar = 1000.0f;
+float zFar = 3000.0f;
 float cameraViewDistance = 50.0f;
 std::vector<glm::mat4> turbineInstances;
 std::vector<Chunk> activeChunks;
@@ -643,7 +643,9 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
-        // renderSun(sunLightingShader, sunVAO, vpMatrix);
+        glDepthMask(GL_FALSE);
+        renderSun(sunLightingShader, sunVAO, vpMatrix);
+        glDepthMask(GL_TRUE);
         renderTurbine(turbine, turbineShader, vpMatrix);
         // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
 
@@ -682,8 +684,8 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
 
     float forwardDistance = 200.0f; 
-    float rightOffset     = 125.0f; 
-    float upOffset        = 100.0f; 
+    float rightOffset     = 75.0f; 
+    float upOffset        = 50.0f; 
     glm::vec3 sunPosition = eye_center + forwardDirection * forwardDistance + rightDirection * rightOffset + up * upOffset;
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), sunPosition);
@@ -694,7 +696,7 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
 
     // Light uniforms
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
-    glUniform1f(glGetUniformLocation(shader, "intensity"), 1.0f);
+    glUniform1f(glGetUniformLocation(shader, "intensity"), 2.0f);
 
     // Example directional light direction
     glm::vec3 dir = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));

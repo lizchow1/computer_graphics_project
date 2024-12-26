@@ -5,7 +5,6 @@ out vec4 FragColor;
 
 uniform vec3 lightColor;
 uniform float intensity;
-
 uniform vec3 lightDir; 
 
 void main() {
