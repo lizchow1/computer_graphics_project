@@ -640,7 +640,7 @@ int main() {
     SolarPanel solarPanel = loadSolarPanel("../src/model/solarpanel/SolarPanel.glb");
 
     generateTurbineInstances();
-    generateSolarPanelInstances(1, 1, 20.0f);
+    generateSolarPanelInstances(3, 3, 1000.0f);
 
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -701,7 +701,7 @@ int main() {
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
         renderTurbine(turbine, turbineShader, vpMatrix);
-        // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
+        renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
 
 
         glfwSwapBuffers(window);
@@ -919,29 +919,40 @@ void generateTurbineInstances() {
 
 void generateSolarPanelInstances(int rows, int cols, float spacing) {
     solarPanelInstances.clear();
-    float startX = -(rows * spacing) / 2.0f;  // Center the array
-    float startZ = 200.0f;  // Position panels along positive Z-axis to match camera direction
     
+    float totalWidth = (cols - 1) * spacing;
+    float totalDepth = (rows - 1) * spacing;
+    float startX = 750.0f - totalWidth / 2.0f;  
+    float startZ = 750.0f - totalDepth / 2.0f; 
+
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
-            glm::mat4 model = glm::mat4(1.0f);
+            glm::mat4 model(1.0f);
 
-            // Position
-            float x = startX + (i * spacing);
-            float z = startZ + (j * spacing);
-            model = glm::translate(model, glm::vec3(x, 0.0f, z));
+            float x = startX + j * spacing;  
+            float z = startZ + i * spacing;  
 
-            // Rotation - tilt panels towards sun
-            model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            model = glm::rotate(model, glm::radians(-30.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // Adjust tilt angle as needed
+            glm::vec3 panelPosition(x, 0.0f, z);
 
+            model = glm::translate(model, panelPosition);
+
+            glm::vec3 toCamera = glm::normalize(eye_center - panelPosition);
+
+            float angleY = atan2(toCamera.x, toCamera.z); 
+            model = glm::rotate(model, angleY, glm::vec3(0, 1, 0));
+
+            model = glm::rotate(model, glm::radians(-30.0f), glm::vec3(1, 0, 0));
 
             solarPanelInstances.push_back(model);
         }
     }
 
+    // Update the instance VBO
     glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, solarPanelInstances.size() * sizeof(glm::mat4), solarPanelInstances.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER,
+                 solarPanelInstances.size() * sizeof(glm::mat4),
+                 &solarPanelInstances[0],
+                 GL_STATIC_DRAW);
 }
 
 void updateChunks(int chunkX, int chunkZ) {
