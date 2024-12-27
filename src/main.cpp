@@ -69,6 +69,7 @@ float FoV = 45.0f;
 float zNear = 0.1f;
 float zFar = 3000.0f;
 float cameraViewDistance = 50.0f;
+float getTerrainHeight(float globalX, float globalZ);
 std::vector<glm::mat4> turbineInstances;
 std::vector<Chunk> activeChunks;
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
@@ -91,7 +92,7 @@ void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint textur
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
 void generateTurbineInstances();
-void generateSolarPanelInstances(int rows, int cols, float spacing);
+void generateSolarPanelInstances(int panelCount);
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
@@ -364,7 +365,6 @@ GLuint loadTexture(const char* path) {
 void generateSphere(float radius, int sectorCount, int stackCount, 
                     std::vector<float>& vertexData, 
                     std::vector<unsigned int>& indices) {
-    // vertexData will store: position.x, position.y, position.z, normal.x, normal.y, normal.z
     const float PI = 3.14159265359f;
 
     for (int i = 0; i <= stackCount; ++i) {
@@ -640,7 +640,7 @@ int main() {
     SolarPanel solarPanel = loadSolarPanel("../src/model/solarpanel/SolarPanel.glb");
 
     generateTurbineInstances();
-    generateSolarPanelInstances(3, 3, 1000.0f);
+    generateSolarPanelInstances(20);
 
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -841,7 +841,7 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap) {
     glUseProgram(shader);
-
+    glUniform1f(glGetUniformLocation(shader, "normalBlendFactor"), 1.0f);
     glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, &eye_center[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
@@ -899,65 +899,77 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
 }
 
 
-void generateTurbineInstances() {
+void generateTurbineInstances()
+{
     turbineInstances.clear();
     turbineInstances.reserve(NUM_TURBINES);
 
     srand(42);
-    for (int i = 0; i < NUM_TURBINES; i++) {
-        float x = (rand() % 1000);
-        float z = (rand() % 1000);
-        float y = 0.0f; 
 
-        float angle = glm::radians((float)(rand() % 360));
+    float rangeX = 2000.0f;
+    float rangeZ = 2000.0f;
+
+    for (int i = 0; i < NUM_TURBINES; i++)
+    {
+        float x = static_cast<float>(rand()) / RAND_MAX * rangeX;
+        float z = static_cast<float>(rand()) / RAND_MAX * rangeZ;
+
+        float y = getTerrainHeight(x, z);
 
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+
+        float angle = glm::radians(static_cast<float>(rand() % 360));
         model = glm::rotate(model, angle, glm::vec3(0,1,0));
+
         turbineInstances.push_back(model);
     }
 }
 
-void generateSolarPanelInstances(int rows, int cols, float spacing) {
+void generateSolarPanelInstances(int panelCount)
+{
     solarPanelInstances.clear();
-    
-    float totalWidth = (cols - 1) * spacing;
-    float totalDepth = (rows - 1) * spacing;
-    float startX = 750.0f - totalWidth / 2.0f;  
-    float startZ = 750.0f - totalDepth / 2.0f; 
+    solarPanelInstances.reserve(panelCount);
 
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            glm::mat4 model(1.0f);
+    srand(123);
 
-            float x = startX + j * spacing;  
-            float z = startZ + i * spacing;  
+    float rangeX = 2000.0f;
+    float rangeZ = 2000.0f;
+    float verticalOffset = 25.0f;
 
-            glm::vec3 panelPosition(x, 0.0f, z);
+    for (int i = 0; i < panelCount; i++)
+    {
+        float x = static_cast<float>(rand()) / RAND_MAX * rangeX;
+        float z = static_cast<float>(rand()) / RAND_MAX * rangeZ;
 
-            model = glm::translate(model, panelPosition);
+        float y = getTerrainHeight(x, z) + verticalOffset;
+        glm::vec3 panelPosition(x, y, z);
 
-            glm::vec3 toCamera = glm::normalize(eye_center - panelPosition);
+        glm::vec3 toCamera = glm::normalize(eye_center - panelPosition);
+        float angleY = atan2(toCamera.x, toCamera.z);
 
-            float angleY = atan2(toCamera.x, toCamera.z); 
-            model = glm::rotate(model, angleY, glm::vec3(0, 1, 0));
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, panelPosition);
+        model = glm::rotate(model, angleY, glm::vec3(0, 1, 0));
 
-            model = glm::rotate(model, glm::radians(-30.0f), glm::vec3(1, 0, 0));
+        model = glm::rotate(model, glm::radians(-30.0f), glm::vec3(1, 0, 0));
+        model = glm::scale(model, glm::vec3(0.5f));
 
-            solarPanelInstances.push_back(model);
-        }
+        solarPanelInstances.push_back(model);
     }
 
-    // Update the instance VBO
-    glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
-    glBufferData(GL_ARRAY_BUFFER,
-                 solarPanelInstances.size() * sizeof(glm::mat4),
-                 &solarPanelInstances[0],
-                 GL_STATIC_DRAW);
+    if (solarPanelInstanceVBO != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
+        glBufferData(GL_ARRAY_BUFFER,
+                     solarPanelInstances.size() * sizeof(glm::mat4),
+                     &solarPanelInstances[0],
+                     GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 }
 
 void updateChunks(int chunkX, int chunkZ) {
     activeChunks.clear();  // Clear the currently loaded chunks
-    int range = 5;  // Load fewer chunks to optimize performance
+    int range = 10;  // Load fewer chunks to optimize performance
     int startX = chunkX - range;
     int endX = chunkX + range;
     int startZ = chunkZ - range;
@@ -1041,6 +1053,35 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
     }
 
     return vertices;
+}
+
+float getTerrainHeight(float globalX, float globalZ)
+{
+    static FastNoiseLite noise;
+    static bool noiseInitialized = false;
+    if (!noiseInitialized) {
+        noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+        noise.SetFractalType(FastNoiseLite::FractalType_FBm);
+        noise.SetFractalOctaves(6);
+        noise.SetFrequency(0.02f);
+        noise.SetFractalLacunarity(2.0f);
+        noise.SetFractalGain(0.5f);
+        noiseInitialized = true;
+    }
+
+    float lowFrequencyNoise = noise.GetNoise(globalX * 0.05f, globalZ * 0.05f);
+    float midFrequencyNoise = noise.GetNoise(globalX * 0.2f,  globalZ * 0.2f);
+    float highFrequencyNoise= noise.GetNoise(globalX * 0.8f,  globalZ * 0.8f);
+
+    float biomeFactor = (noise.GetNoise(globalX * 0.01f, globalZ * 0.01f) + 1.0f)*0.5f;
+    float biomeHeightScale = glm::mix(20.0f, 60.0f, biomeFactor);
+
+    float height = ((lowFrequencyNoise * 0.5f +
+                     midFrequencyNoise * 0.3f +
+                     highFrequencyNoise * 0.2f) + 1.0f) * 0.5f 
+                     * biomeHeightScale;
+
+    return height;
 }
 
 void processInput(GLFWwindow *window, float deltaTime) {
