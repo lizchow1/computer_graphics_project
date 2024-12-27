@@ -49,12 +49,16 @@ struct SolarPanel {
     std::vector<SolarPanelMesh> meshes;
 };
 
-struct Chunk {
+struct LODLevel {
     GLuint VAO;
     unsigned int indexCount;
-    glm::vec2 position;  
-     int chunkX; 
-     int chunkZ; 
+};
+
+struct Chunk {
+    std::vector<LODLevel> lodLevels;
+    glm::vec2 position;
+    int chunkX;
+    int chunkZ;
 };
 
 struct ChunkData {
@@ -98,7 +102,7 @@ int currentChunkX = 0;
 int currentChunkZ = 0;
 static std::thread chunkThread;
 static std::mutex chunkMutex;
-static std::queue<ChunkData> chunkDataQueue;     
+static std::queue<std::vector<ChunkData>> chunkDataQueue;  
 static std::queue<std::pair<int,int>> chunkRequests;  
 static std::atomic<bool> keepLoadingChunks(true);
 static double lastTime = 0.0;
@@ -118,6 +122,7 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
 void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix);
 void chunkLoadingTask();
+int getLODIndex(float distance);
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -535,17 +540,29 @@ void pollLoadedChunks()
     std::lock_guard<std::mutex> lock(chunkMutex);
     while (!chunkDataQueue.empty())
     {
-        ChunkData cd = chunkDataQueue.front();
+        // We now expect chunkDataQueue.front() to contain *multiple* LOD data
+        std::vector<ChunkData> lodChunkData = chunkDataQueue.front();
         chunkDataQueue.pop();
 
-        GLuint terrainVAO = setupTerrainBuffers(cd.vertices, cd.indices);
+        // The first LODChunkData item determines the position and chunk coords
+        glm::vec2 pos   = lodChunkData[0].position;
+        int       cX    = lodChunkData[0].chunkX;
+        int       cZ    = lodChunkData[0].chunkZ;
 
         Chunk newChunk;
-        newChunk.VAO         = terrainVAO;
-        newChunk.indexCount  = (unsigned int)cd.indices.size();
-        newChunk.position    = cd.position;
-        newChunk.chunkX      = cd.chunkX;
-        newChunk.chunkZ      = cd.chunkZ;
+        newChunk.position = pos;
+        newChunk.chunkX   = cX;
+        newChunk.chunkZ   = cZ;
+
+        // Build VAOs for each LOD level
+        for (auto& cd : lodChunkData)
+        {
+            GLuint vao = setupTerrainBuffers(cd.vertices, cd.indices);
+            LODLevel level;
+            level.VAO        = vao;
+            level.indexCount = static_cast<unsigned int>(cd.indices.size());
+            newChunk.lodLevels.push_back(level);
+        }
 
         activeChunks.push_back(newChunk);
     }
@@ -672,7 +689,15 @@ int main() {
 
     GLuint haloQuadVAO = createHaloQuadVAO();
 
+    keepLoadingChunks = true;
+    chunkThread = std::thread(chunkLoadingTask);
+
     updateChunks(currentChunkX, currentChunkZ);
+
+    while (!chunkRequests.empty()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        pollLoadedChunks();
+    }
 
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
 
@@ -722,10 +747,6 @@ int main() {
     }
 
     glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
-
-    // Start the background thread for chunk loading
-    keepLoadingChunks = true;
-    std::thread chunkThread(chunkLoadingTask);
 
     const double minFrameTime = 1.0 / 15.0;
     double frameStartTime = glfwGetTime();
@@ -806,17 +827,37 @@ void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint textur
     glBindTexture(GL_TEXTURE_2D, texture);
     glUniform1i(glGetUniformLocation(shader, "terrainTexture"), 0);
 
-        for (const auto& chunk : activeChunks) {
-            GLint chunkOffsetLoc = glGetUniformLocation(shader, "chunkOffset");
-            if (chunkOffsetLoc == -1) {
-                std::cerr << "chunkOffset uniform not found in shader!" << std::endl;
-                continue;
-            }
-            glUniform2f(chunkOffsetLoc, chunk.position.x, chunk.position.y);
+    for (const auto& chunk : activeChunks) {
+        // Compute distance from eye_center to the chunk center
+        glm::vec3 chunkCenter(
+            chunk.position.x + (GRID_SIZE * GRID_SCALE * 0.5f),
+            0.0f, // approx center Y, or you could sample terrain height
+            chunk.position.y + (GRID_SIZE * GRID_SCALE * 0.5f)
+        );
 
-            glBindVertexArray(chunk.VAO);
-            glDrawElements(GL_TRIANGLES, chunk.indexCount, GL_UNSIGNED_INT, 0);
+        float distance = glm::distance(chunkCenter, eye_center);
+
+        // Decide LOD index
+        int lodIndex = getLODIndex(distance);
+
+        // Safety check in case we don't have that many LOD levels
+        if (lodIndex < 0) lodIndex = 0;
+        if (lodIndex >= (int)chunk.lodLevels.size()) {
+            lodIndex = (int)chunk.lodLevels.size() - 1;
         }
+
+        // Grab the correct LOD
+        const LODLevel& lodLevel = chunk.lodLevels[lodIndex];
+
+        // Optional: pass chunk offset if your shader uses it
+        GLint chunkOffsetLoc = glGetUniformLocation(shader, "chunkOffset");
+        if (chunkOffsetLoc != -1) {
+            glUniform2f(chunkOffsetLoc, chunk.position.x, chunk.position.y);
+        }
+
+        glBindVertexArray(lodLevel.VAO);
+        glDrawElements(GL_TRIANGLES, lodLevel.indexCount, GL_UNSIGNED_INT, 0);
+    }
 }
 
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
@@ -983,6 +1024,15 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
     }
 }
 
+int getLODIndex(float distance)
+{
+    if (distance < 400.0f)
+        return 0;  // Highest detail
+    else if (distance < 800.0f)
+        return 1;  // Medium detail
+    else
+        return 2;  // Lowest detail
+}
 
 void generateTurbineInstances()
 {
@@ -1055,7 +1105,7 @@ void generateSolarPanelInstances(int panelCount)
 void updateChunks(int cx, int cz)
 {
     // Our chosen "load distance" for chunks:
-    int range = 10;
+    int range = 5;
     int startX = cx - range;
     int endX   = cx + range;
     int startZ = cz - range;
@@ -1191,6 +1241,8 @@ float getTerrainHeight(float globalX, float globalZ)
 
 void chunkLoadingTask()
 {
+    std::vector<unsigned int> lodGridSizes = { 100, 50, 25 };
+
     while (keepLoadingChunks)
     {
         std::pair<int,int> request;
@@ -1210,24 +1262,39 @@ void chunkLoadingTask()
 
         int x = request.first;
         int z = request.second;
-        glm::vec2 chunkPos(x * GRID_SIZE * GRID_SCALE, z * GRID_SIZE * GRID_SCALE);
 
-        std::vector<unsigned int> indices;
-        std::vector<Vertex> vertices = generateTerrain(
-            GRID_SIZE, GRID_SCALE, HEIGHT_SCALE,
-            indices, x, z
+        glm::vec2 chunkPos(
+            x * GRID_SIZE * GRID_SCALE,
+            z * GRID_SIZE * GRID_SCALE
         );
 
-        ChunkData cd;
-        cd.vertices  = std::move(vertices);
-        cd.indices   = std::move(indices);
-        cd.position  = chunkPos;
-        cd.chunkX    = x;
-        cd.chunkZ    = z;
+        std::vector<ChunkData> allLODData;
+        allLODData.reserve(lodGridSizes.size());
+
+        for (auto lodGrid : lodGridSizes)
+        {
+            std::vector<unsigned int> indices;
+            std::vector<Vertex> vertices = generateTerrain(
+                lodGrid, // <--- smaller or bigger
+                GRID_SCALE * (static_cast<float>(GRID_SIZE) / lodGrid),
+                HEIGHT_SCALE,
+                indices,
+                x, z
+            );
+
+            ChunkData cd;
+            cd.vertices  = std::move(vertices);
+            cd.indices   = std::move(indices);
+            cd.position  = chunkPos;
+            cd.chunkX    = x;
+            cd.chunkZ    = z;
+
+            allLODData.push_back(cd);
+        }
 
         {
             std::lock_guard<std::mutex> lock(chunkMutex);
-            chunkDataQueue.push(cd);
+            chunkDataQueue.push(allLODData);
         }
     }
 }
