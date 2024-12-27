@@ -95,6 +95,7 @@ void generateSolarPanelInstances(int rows, int cols, float spacing);
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
+void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix);
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -467,6 +468,47 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
     return VAO;
 }
 
+GLuint createHaloQuadVAO()
+{
+    // 4 vertices (2 triangles). Positions + UVs
+    float vertices[] = {
+        //   X      Y     Z     U     V
+        -1.0f, -1.0f, 0.0f,   0.0f, 0.0f,
+         1.0f, -1.0f, 0.0f,   1.0f, 0.0f,
+         1.0f,  1.0f, 0.0f,   1.0f, 1.0f,
+        -1.0f,  1.0f, 0.0f,   0.0f, 1.0f
+    };
+
+    unsigned int indices[] = { 0,1,2,  2,3,0 };
+
+    GLuint VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+
+    // Vertex buffer
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    // Index buffer
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    // Positions (location = 0)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
+
+    // UVs (location = 1)
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
+
+    glBindVertexArray(0);
+
+    return VAO;
+}
+
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -577,7 +619,15 @@ int main() {
         return -1;
     }
 
+    GLuint haloShader = LoadShadersFromFile("../src/shader/halo.vert", "../src/shader/halo.frag");
+     if (haloShader == 0) {
+        std::cerr << "Failed to load halo shaders." << std::endl;
+        return -1;
+    }
+
     GLuint sunVAO = createSunVAO();
+
+    GLuint haloQuadVAO = createHaloQuadVAO();
 
     updateChunks(currentChunkX, currentChunkZ);
 
@@ -644,7 +694,11 @@ int main() {
 
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         renderSun(sunLightingShader, sunVAO, vpMatrix);
+        renderHalo(haloShader,haloQuadVAO,vpMatrix);
+        glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
         renderTurbine(turbine, turbineShader, vpMatrix);
         // renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
@@ -694,18 +748,50 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &model[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
 
-    // Light uniforms
-    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
-    glUniform1f(glGetUniformLocation(shader, "intensity"), 2.0f);
+    glm::vec3 brightSunColor = glm::vec3(1.0f, 0.98f, 0.90f);
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &brightSunColor[0]);
+    glUniform1f(glGetUniformLocation(shader, "intensity"), 5.0f);
 
-    // Example directional light direction
     glm::vec3 dir = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));
     glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &dir[0]);
 
-    // Draw the sphere
     glBindVertexArray(sunVAO);
-    // Sphere has (sectorCount * stackCount * 6) indices
     glDrawElements(GL_TRIANGLES, 36 * 18 * 6, GL_UNSIGNED_INT, 0);
+}
+
+void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix) {
+    glUseProgram(shader);
+
+    float forwardDistance = 200.0f;
+    float rightOffset = 75.0f;
+    float upOffset = 50.0f;
+    glm::vec3 sunPos = eye_center 
+                       + forwardDirection * forwardDistance
+                       + rightDirection   * rightOffset
+                       + up               * upOffset;
+
+    glm::mat4 billboard = glm::mat4(1.0f);
+    billboard[0] = glm::vec4(rightDirection, 0.0f);  
+    billboard[1] = glm::vec4(up, 0.0f);              
+    billboard[2] = glm::vec4(-forwardDirection, 0.0f); 
+
+    glm::mat4 modelHalo = glm::translate(glm::mat4(1.0f), sunPos) 
+                        * billboard
+                        * glm::scale(glm::mat4(1.0f), glm::vec3(50.0f)); 
+
+    // Set uniforms
+    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelHalo[0][0]);
+
+    glm::vec3 haloColor = glm::vec3(1.0f, 0.95f, 0.8f); 
+    glUniform3fv(glGetUniformLocation(shader, "haloColor"), 1, &haloColor[0]);
+
+    glUniform1f(glGetUniformLocation(shader, "haloAlpha"), 0.3f);  
+    glUniform1f(glGetUniformLocation(shader, "haloIntensity"), 1.0f);  
+
+    // Draw the halo quad
+    glBindVertexArray(haloQuadVAO);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
 
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
