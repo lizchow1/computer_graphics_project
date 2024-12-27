@@ -101,6 +101,8 @@ static std::mutex chunkMutex;
 static std::queue<ChunkData> chunkDataQueue;     
 static std::queue<std::pair<int,int>> chunkRequests;  
 static std::atomic<bool> keepLoadingChunks(true);
+static double lastTime = 0.0;
+static int nbFrames = 0;
 
 // Function prototypes
 void processInput(GLFWwindow *window, float deltaTime);
@@ -567,6 +569,7 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
+    lastTime = glfwGetTime();
     glfwSwapInterval(1);
     glfwSetKeyCallback(window, key_callback);
 
@@ -724,10 +727,30 @@ int main() {
     keepLoadingChunks = true;
     std::thread chunkThread(chunkLoadingTask);
 
+    const double minFrameTime = 1.0 / 15.0;
+    double frameStartTime = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {
+        // Frame start
         float currentFrameTime = glfwGetTime();
         deltaTime = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
+
+        double currentTime = glfwGetTime();
+        nbFrames++;
+        if (currentTime - lastTime >= 1.0) { 
+            double fps = double(nbFrames);
+            std::string title = "Towards a Futuristic Emerald Isle. FPS: " + std::to_string(fps);
+            glfwSetWindowTitle(window, title.c_str()); 
+            if (fps < 15.0) {
+                std::cerr << "Warning: FPS dropped below 15!" << std::endl;
+            }
+
+            // Reset for the next second
+            nbFrames = 0;
+            lastTime += 1.0;
+        }
+
         processInput(window, deltaTime);
 
         // Poll to see if any new chunk data is ready
@@ -738,6 +761,7 @@ int main() {
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Render logic
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
@@ -751,6 +775,15 @@ int main() {
 
         glfwSwapBuffers(window);
         glfwPollEvents();
+
+        // Frame end and capping
+        double frameEndTime = glfwGetTime();
+        double frameDuration = frameEndTime - frameStartTime;
+        if (frameDuration < minFrameTime) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                static_cast<int>((minFrameTime - frameDuration) * 1000)));
+        }
+        frameStartTime = glfwGetTime(); // Reset frame start time after delay
     }
 
     glfwTerminate();
