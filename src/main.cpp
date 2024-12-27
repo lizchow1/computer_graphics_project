@@ -5,8 +5,12 @@
 #include <vector>
 #include <iostream>
 #include <cmath>
-#include "external/FastNoiseLite.h"
+#include <external/FastNoiseLite.h>
 #include <render/shader.h>
+#include <thread>
+#include <mutex>
+#include <queue>
+#include <atomic>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -49,8 +53,17 @@ struct Chunk {
     GLuint VAO;
     unsigned int indexCount;
     glm::vec2 position;  
+     int chunkX; 
+     int chunkZ; 
 };
 
+struct ChunkData {
+    std::vector<Vertex> vertices;
+    std::vector<unsigned int> indices;
+    glm::vec2 position;
+    int chunkX;
+    int chunkZ;
+};
 
 // Constants
 const unsigned int GRID_SIZE = 100;
@@ -83,6 +96,11 @@ static float lastFrameTime = 0.0f;
 static float deltaTime = 0.0f;
 int currentChunkX = 0;
 int currentChunkZ = 0;
+static std::thread chunkThread;
+static std::mutex chunkMutex;
+static std::queue<ChunkData> chunkDataQueue;     
+static std::queue<std::pair<int,int>> chunkRequests;  
+static std::atomic<bool> keepLoadingChunks(true);
 
 // Function prototypes
 void processInput(GLFWwindow *window, float deltaTime);
@@ -97,6 +115,7 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
 void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix);
+void chunkLoadingTask();
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -509,6 +528,27 @@ GLuint createHaloQuadVAO()
     return VAO;
 }
 
+void pollLoadedChunks()
+{
+    std::lock_guard<std::mutex> lock(chunkMutex);
+    while (!chunkDataQueue.empty())
+    {
+        ChunkData cd = chunkDataQueue.front();
+        chunkDataQueue.pop();
+
+        GLuint terrainVAO = setupTerrainBuffers(cd.vertices, cd.indices);
+
+        Chunk newChunk;
+        newChunk.VAO         = terrainVAO;
+        newChunk.indexCount  = (unsigned int)cd.indices.size();
+        newChunk.position    = cd.position;
+        newChunk.chunkX      = cd.chunkX;
+        newChunk.chunkZ      = cd.chunkZ;
+
+        activeChunks.push_back(newChunk);
+    }
+}
+
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -666,7 +706,6 @@ int main() {
     glBufferData(GL_ARRAY_BUFFER, solarPanelInstances.size() * sizeof(glm::mat4), &solarPanelInstances[0], GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    // Attach instance VBO to each solar panel mesh
     for (auto& mesh : solarPanel.meshes) {
         glBindVertexArray(mesh.VAO);
         glBindBuffer(GL_ARRAY_BUFFER, solarPanelInstanceVBO);
@@ -679,13 +718,20 @@ int main() {
         glBindVertexArray(0);
     }
 
-    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); 
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
+
+    // Start the background thread for chunk loading
+    keepLoadingChunks = true;
+    std::thread chunkThread(chunkLoadingTask);
 
     while (!glfwWindowShouldClose(window)) {
         float currentFrameTime = glfwGetTime();
         deltaTime = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
         processInput(window, deltaTime);
+
+        // Poll to see if any new chunk data is ready
+        pollLoadedChunks();
 
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
@@ -697,18 +743,24 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         renderSun(sunLightingShader, sunVAO, vpMatrix);
-        renderHalo(haloShader,haloQuadVAO,vpMatrix);
+        renderHalo(haloShader, haloQuadVAO, vpMatrix);
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
         renderTurbine(turbine, turbineShader, vpMatrix);
         renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
-
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
     glfwTerminate();
+
+    // Signal thread to stop, then join
+    keepLoadingChunks = false;
+    if (chunkThread.joinable()) {
+        chunkThread.join();
+    }
+
     return 0;
 }
 
@@ -967,25 +1019,45 @@ void generateSolarPanelInstances(int panelCount)
     }
 }
 
-void updateChunks(int chunkX, int chunkZ) {
-    activeChunks.clear();  // Clear the currently loaded chunks
-    int range = 10;  // Load fewer chunks to optimize performance
-    int startX = chunkX - range;
-    int endX = chunkX + range;
-    int startZ = chunkZ - range;
-    int endZ = chunkZ + range;
+void updateChunks(int cx, int cz)
+{
+    // Our chosen "load distance" for chunks:
+    int range = 10;
+    int startX = cx - range;
+    int endX   = cx + range;
+    int startZ = cz - range;
+    int endZ   = cz + range;
 
+    // 1) Remove out-of-range chunks
+    activeChunks.erase(
+        std::remove_if(activeChunks.begin(), activeChunks.end(),
+            [=](const Chunk &chunk)
+            {
+                return (chunk.chunkX < startX || chunk.chunkX > endX ||
+                        chunk.chunkZ < startZ || chunk.chunkZ > endZ);
+            }
+        ),
+        activeChunks.end()
+    );
+
+    // 2) Enqueue requests for chunks in range that we do not already have
     for (int z = startZ; z <= endZ; ++z) {
         for (int x = startX; x <= endX; ++x) {
-            glm::vec2 chunkPos(x * GRID_SIZE * GRID_SCALE, z * GRID_SIZE * GRID_SCALE);
-            std::vector<unsigned int> indices;
-            std::vector<Vertex> vertices = generateTerrain(GRID_SIZE, GRID_SCALE, HEIGHT_SCALE, indices, x, z);
-
-            GLuint terrainVAO = setupTerrainBuffers(vertices, indices);
-            activeChunks.push_back({terrainVAO, (unsigned int)indices.size(), chunkPos});
+            bool found = false;
+            for (const auto &chunk : activeChunks) {
+                if (chunk.chunkX == x && chunk.chunkZ == z) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                std::lock_guard<std::mutex> lock(chunkMutex);
+                chunkRequests.push({x, z});
+            }
         }
     }
 }
+
 
 
 
@@ -1082,6 +1154,49 @@ float getTerrainHeight(float globalX, float globalZ)
                      * biomeHeightScale;
 
     return height;
+}
+
+void chunkLoadingTask()
+{
+    while (keepLoadingChunks)
+    {
+        std::pair<int,int> request;
+        {
+            std::lock_guard<std::mutex> lock(chunkMutex);
+            if (!chunkRequests.empty())
+            {
+                request = chunkRequests.front();
+                chunkRequests.pop();
+            }
+            else
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+        }
+
+        int x = request.first;
+        int z = request.second;
+        glm::vec2 chunkPos(x * GRID_SIZE * GRID_SCALE, z * GRID_SIZE * GRID_SCALE);
+
+        std::vector<unsigned int> indices;
+        std::vector<Vertex> vertices = generateTerrain(
+            GRID_SIZE, GRID_SCALE, HEIGHT_SCALE,
+            indices, x, z
+        );
+
+        ChunkData cd;
+        cd.vertices  = std::move(vertices);
+        cd.indices   = std::move(indices);
+        cd.position  = chunkPos;
+        cd.chunkX    = x;
+        cd.chunkZ    = z;
+
+        {
+            std::lock_guard<std::mutex> lock(chunkMutex);
+            chunkDataQueue.push(cd);
+        }
+    }
 }
 
 void processInput(GLFWwindow *window, float deltaTime) {
