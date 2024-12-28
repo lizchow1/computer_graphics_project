@@ -75,7 +75,7 @@ const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 50.0f;
 const int NUM_TURBINES = 20;
 
-glm::vec3 eye_center(0.0f, 50.0f, 1500.0f);  
+glm::vec3 eye_center(0.0f, 50.0f, 2000.0f);  
 glm::vec3 lookat(750.0f, 0.0f, 751.0f);       
 glm::vec3 up(0.0f, 1.0f, 0.0f); 
 glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
@@ -112,14 +112,14 @@ static int nbFrames = 0;
 void processInput(GLFWwindow *window, float deltaTime);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
 void updateChunks(int chunkX, int chunkZ);
-void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture);
+void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture, glm::mat4 lightSpaceMatrix, GLuint depthMap);
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix);
-void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix);
+void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix, glm::mat4 lightSpaceMatrix, GLuint depthMap);
 void generateTurbineInstances();
 void generateSolarPanelInstances(int panelCount);
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
-                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap);
+                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap, glm::mat4 lightSpaceMatrix, GLuint depthMap);
 void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix);
 void chunkLoadingTask();
 int getLODIndex(float distance);
@@ -595,6 +595,32 @@ int main() {
         return -1;
     }
 
+    const unsigned int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
+
+    GLuint depthMapFBO;
+    glGenFramebuffers(1, &depthMapFBO);
+
+    // Create the depth texture
+    GLuint depthMap;
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0,  GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Prevent shadow edges from clamping incorrectly
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+    // Attach depth texture to FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE); 
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     GLuint grassTexture = loadTexture("../src/utils/grass.jpeg");
     if (grassTexture == 0) {
         std::cerr << "Failed to load grass texture!" << std::endl;
@@ -685,6 +711,12 @@ int main() {
         return -1;
     }
 
+    GLuint shadowShader = LoadShadersFromFile("../src/shader/shadow.vert", "../src/shader/shadow.frag");
+     if (shadowShader == 0) {
+        std::cerr << "Failed to load shadow shaders." << std::endl;
+        return -1;
+    }
+
     GLuint sunVAO = createSunVAO();
 
     GLuint haloQuadVAO = createHaloQuadVAO();
@@ -700,6 +732,12 @@ int main() {
     }
 
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
+
+    float orthoSize = 7000.0f; // Adjust as needed to fit your scene
+    glm::mat4 lightProjection = glm::ortho( -orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 5000.0f);
+    glm::vec3 lightPos = eye_center - sunlightDirection * 1000.0f; 
+    glm::mat4 lightView = glm::lookAt(lightPos, lightPos + sunlightDirection, glm::vec3(0, 1, 0));
+    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
     glEnable(GL_DEPTH_TEST);
 
@@ -748,7 +786,6 @@ int main() {
 
     glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
 
-    const double minFrameTime = 1.0 / 15.0;
     double frameStartTime = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
@@ -763,27 +800,99 @@ int main() {
             double fps = double(nbFrames);
             std::string title = "Towards a Futuristic Emerald Isle. FPS: " + std::to_string(fps);
             glfwSetWindowTitle(window, title.c_str()); 
-            if (fps < 15.0) {
-                std::cerr << "Warning: FPS dropped below 15!" << std::endl;
-            }
-
-            // Reset for the next second
             nbFrames = 0;
             lastTime += 1.0;
         }
 
         processInput(window, deltaTime);
-
-        // Poll to see if any new chunk data is ready
         pollLoadedChunks();
 
         glm::mat4 viewMatrix = glm::lookAt(eye_center, lookat, up);
         glm::mat4 vpMatrix = projectionMatrix * viewMatrix;
 
+        glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        glUseProgram(shadowShader);
+        GLuint lightSpaceLoc = glGetUniformLocation(shadowShader, "lightSpaceMatrix");
+        glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+        {
+            GLint modelLoc = glGetUniformLocation(shadowShader, "model");
+            for (const auto& chunk : activeChunks) {
+                int lodIndex = 0; 
+                glm::mat4 terrainModel = glm::mat4(1.0f);
+                glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &terrainModel[0][0]);
+                const LODLevel& lodLevel = chunk.lodLevels[lodIndex];
+                glBindVertexArray(lodLevel.VAO);
+                glDrawElements(GL_TRIANGLES, lodLevel.indexCount, GL_UNSIGNED_INT, nullptr);
+            }
+        }
+
+        {
+            GLint modelLoc = glGetUniformLocation(shadowShader, "model");
+            glm::mat4 identityModel = glm::mat4(1.0f);
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &identityModel[0][0]);
+
+            for (size_t i = 0; i < turbine.meshes.size(); ++i) {
+                glBindVertexArray(turbine.meshes[i].VAO);
+
+                if (turbine.meshes[i].indexCount > 0) {
+                    glDrawElementsInstanced(
+                        GL_TRIANGLES,
+                        turbine.meshes[i].indexCount,
+                        turbine.meshes[i].indexType,
+                        0,
+                        NUM_TURBINES
+                    );
+                } else {
+                    glDrawArraysInstanced(
+                        GL_TRIANGLES,
+                        0,
+                        turbine.meshes[i].vertexCount,
+                        NUM_TURBINES
+                    );
+                }
+            }
+        }
+
+        {
+            GLint modelLoc = glGetUniformLocation(shadowShader, "model");
+            glm::mat4 identityModel = glm::mat4(1.0f);
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &identityModel[0][0]);
+
+            for (const auto& mesh : solarPanel.meshes) {
+                glBindVertexArray(mesh.VAO);
+
+                if (mesh.indexCount > 0) {
+                    glDrawElementsInstanced(
+                        GL_TRIANGLES,
+                        mesh.indexCount,
+                        mesh.indexType,
+                        0,
+                        static_cast<GLsizei>(solarPanelInstances.size())
+                    );
+                } else {
+                    glDrawArraysInstanced(
+                        GL_TRIANGLES,
+                        0,
+                        mesh.vertexCount,
+                        static_cast<GLsizei>(solarPanelInstances.size())
+                    );
+                }
+            }
+        }
+
+        glBindVertexArray(0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        int windowWidth, windowHeight;
+        glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+        glViewport(0, 0, windowWidth, windowHeight);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Render logic
-        renderTerrainChunks(terrainShader, vpMatrix, grassTexture);
+        renderTerrainChunks(terrainShader, vpMatrix, grassTexture, lightSpaceMatrix, depthMap);
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -791,20 +900,15 @@ int main() {
         renderHalo(haloShader, haloQuadVAO, vpMatrix);
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
-        renderTurbine(turbine, turbineShader, vpMatrix);
-        renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap);
+        renderTurbine(turbine, turbineShader, vpMatrix, lightSpaceMatrix, depthMap);
+        renderSolarPanels(solarPanel, solarPanelShader, vpMatrix, baseColor, normalMap, metallicMap, roughnessMap, aoMap, heightMap, emissiveMap, opacityMap, specularMap, lightSpaceMatrix, depthMap);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
 
-        // Frame end and capping
         double frameEndTime = glfwGetTime();
         double frameDuration = frameEndTime - frameStartTime;
-        if (frameDuration < minFrameTime) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(
-                static_cast<int>((minFrameTime - frameDuration) * 1000)));
-        }
-        frameStartTime = glfwGetTime(); // Reset frame start time after delay
+        frameStartTime = glfwGetTime(); 
     }
 
     glfwTerminate();
@@ -818,10 +922,22 @@ int main() {
     return 0;
 }
 
-void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture) {
+void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
     glUseProgram(shader);
 
     glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+
+    GLint lightSpaceLoc = glGetUniformLocation(shader, "lightSpaceMatrix");
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]); 
+
+    glActiveTexture(GL_TEXTURE9);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    GLint shadowMapLoc = glGetUniformLocation(shader, "shadowMap");
+    glUniform1i(shadowMapLoc, 9);
+
+    glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
+    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -869,7 +985,7 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glm::vec3 sunPosition = eye_center + forwardDirection * forwardDistance + rightDirection * rightOffset + up * upOffset;
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), sunPosition);
-    model = glm::scale(model, glm::vec3(10.0f));
+    model = glm::scale(model, glm::vec3(7.5f));
 
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &model[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
@@ -920,8 +1036,15 @@ void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix) {
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
 
-void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix) {
+void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
     glUseProgram(shader);
+
+    GLint lightSpaceLoc = glGetUniformLocation(shader, "lightSpaceMatrix");
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+    glActiveTexture(GL_TEXTURE9);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    GLint shadowMapLoc = glGetUniformLocation(shader, "shadowMap");
+    glUniform1i(shadowMapLoc, 9);
 
     static float bladeRotation = 0.0f;
     float rotationSpeed = 0.10f;
@@ -965,8 +1088,15 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
 
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
-                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap) {
+                       GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
     glUseProgram(shader);
+    GLint lightSpaceLoc = glGetUniformLocation(shader, "lightSpaceMatrix");
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+    glActiveTexture(GL_TEXTURE9);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    GLint shadowMapLoc = glGetUniformLocation(shader, "shadowMap");
+    glUniform1i(shadowMapLoc, 9);
     glUniform1f(glGetUniformLocation(shader, "normalBlendFactor"), 1.0f);
     glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, &eye_center[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
@@ -1105,7 +1235,7 @@ void generateSolarPanelInstances(int panelCount)
 void updateChunks(int cx, int cz)
 {
     // Our chosen "load distance" for chunks:
-    int range = 5;
+    int range = 10;
     int startX = cx - range;
     int endX   = cx + range;
     int startZ = cz - range;
