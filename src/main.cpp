@@ -922,13 +922,15 @@ int main() {
     return 0;
 }
 
-void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
+void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture, glm::mat4 lightSpaceMatrix, GLuint depthMap)
+{
     glUseProgram(shader);
 
-    glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
+    GLint vpLoc = glGetUniformLocation(shader, "vpMatrix");
+    glUniformMatrix4fv(vpLoc, 1, GL_FALSE, &vpMatrix[0][0]);
 
     GLint lightSpaceLoc = glGetUniformLocation(shader, "lightSpaceMatrix");
-    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]); 
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, &lightSpaceMatrix[0][0]);
 
     glActiveTexture(GL_TEXTURE9);
     glBindTexture(GL_TEXTURE_2D, depthMap);
@@ -937,44 +939,41 @@ void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint textur
 
     glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
-    glUniform3f(glGetUniformLocation(shader, "viewPos"), eye_center.x, eye_center.y, eye_center.z);
+    glUniform3f(glGetUniformLocation(shader, "viewPos"),
+                eye_center.x, eye_center.y, eye_center.z);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
     glUniform1i(glGetUniformLocation(shader, "terrainTexture"), 0);
 
+    GLint modelMatrixLoc = glGetUniformLocation(shader, "modelMatrix");
+
     for (const auto& chunk : activeChunks) {
-        // Compute distance from eye_center to the chunk center
         glm::vec3 chunkCenter(
             chunk.position.x + (GRID_SIZE * GRID_SCALE * 0.5f),
-            0.0f, // approx center Y, or you could sample terrain height
+            0.0f,
             chunk.position.y + (GRID_SIZE * GRID_SCALE * 0.5f)
         );
-
         float distance = glm::distance(chunkCenter, eye_center);
-
-        // Decide LOD index
         int lodIndex = getLODIndex(distance);
-
-        // Safety check in case we don't have that many LOD levels
         if (lodIndex < 0) lodIndex = 0;
         if (lodIndex >= (int)chunk.lodLevels.size()) {
             lodIndex = (int)chunk.lodLevels.size() - 1;
         }
-
-        // Grab the correct LOD
         const LODLevel& lodLevel = chunk.lodLevels[lodIndex];
 
-        // Optional: pass chunk offset if your shader uses it
-        GLint chunkOffsetLoc = glGetUniformLocation(shader, "chunkOffset");
-        if (chunkOffsetLoc != -1) {
-            glUniform2f(chunkOffsetLoc, chunk.position.x, chunk.position.y);
-        }
+        glm::mat4 chunkModel = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(chunk.position.x, 0.0f, chunk.position.y)
+        );
+
+        glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, &chunkModel[0][0]);
 
         glBindVertexArray(lodLevel.VAO);
         glDrawElements(GL_TRIANGLES, lodLevel.indexCount, GL_UNSIGNED_INT, 0);
     }
 }
+
 
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
