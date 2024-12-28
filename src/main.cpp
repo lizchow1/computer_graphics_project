@@ -388,6 +388,42 @@ GLuint loadTexture(const char* path) {
     return textureID;
 }
 
+GLuint createSkyQuadVAO()
+{
+    // Two triangles to cover the full screen in clip space coordinates:
+    float skyVertices[] = {
+        //   X      Y
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+         1.0f,  1.0f,
+        -1.0f,  1.0f
+    };
+
+    unsigned int skyIndices[] = { 0, 1, 2,  2, 3, 0 };
+
+    GLuint VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+
+    // Vertex buffer
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(skyVertices), skyVertices, GL_STATIC_DRAW);
+
+    // Index buffer
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(skyIndices), skyIndices, GL_STATIC_DRAW);
+
+    // Positions (location = 0)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+    return VAO;
+}
+
 void generateSphere(float radius, int sectorCount, int stackCount, 
                     std::vector<float>& vertexData, 
                     std::vector<unsigned int>& indices) {
@@ -717,9 +753,15 @@ int main() {
         return -1;
     }
 
-    GLuint sunVAO = createSunVAO();
+    GLuint skyShader = LoadShadersFromFile("../src/shader/sky.vert", "../src/shader/sky.frag");
+    if (skyShader == 0) {
+        std::cerr << "Failed to load sky shaders." << std::endl;
+        return -1;
+    }
 
+    GLuint sunVAO = createSunVAO();
     GLuint haloQuadVAO = createHaloQuadVAO();
+    GLuint skyQuadVAO = createSkyQuadVAO();
 
     keepLoadingChunks = true;
     chunkThread = std::thread(chunkLoadingTask);
@@ -890,7 +932,13 @@ int main() {
         int windowWidth, windowHeight;
         glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
         glViewport(0, 0, windowWidth, windowHeight);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(skyShader);
+        glBindVertexArray(skyQuadVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glEnable(GL_DEPTH_TEST);
 
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture, lightSpaceMatrix, depthMap);
         glDepthMask(GL_FALSE);
