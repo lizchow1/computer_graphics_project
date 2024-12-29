@@ -943,7 +943,7 @@ int main() {
         renderTerrainChunks(terrainShader, vpMatrix, grassTexture, lightSpaceMatrix, depthMap);
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         renderSun(sunLightingShader, sunVAO, vpMatrix);
         renderHalo(haloShader, haloQuadVAO, vpMatrix);
         glDisable(GL_BLEND);
