@@ -17,6 +17,14 @@
 #define TINYGLTF_IMPLEMENTATION
 #include <tinygltf-2.9.3/tiny_gltf.h>
 
+/*
+    ----------------------------------
+    DATA STRUCTURES & GLOBAL VARIABLES
+    ----------------------------------
+
+*/
+
+// Data structures for storing vertex, mesh, and object data
 struct Vertex {
     glm::vec3 Position;
     glm::vec3 Normal;
@@ -69,37 +77,45 @@ struct ChunkData {
     int chunkZ;
 };
 
-// Constants
+// Constants for grid size and scaling
 const unsigned int GRID_SIZE = 100;
 const float GRID_SCALE = 1.0f;
 const float HEIGHT_SCALE = 50.0f;
 const int NUM_TURBINES = 20;
 
+// Camera and directional lighting setup
 glm::vec3 eye_center(0.0f, 50.0f, 2000.0f);  
-glm::vec3 lookat(750.0f, 0.0f, 751.0f);       
-glm::vec3 up(0.0f, 1.0f, 0.0f); 
-glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)); 
-glm::vec3 sunlightColor = glm::vec3(1.0f, 0.9f, 0.7f);                   
+glm::vec3 lookat(750.0f, 0.0f, 751.0f);      
+glm::vec3 up(0.0f, 1.0f, 0.0f);              
+glm::vec3 sunlightDirection = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));
+glm::vec3 sunlightColor = glm::vec3(1.0f, 0.9f, 0.7f);
 glm::vec3 forwardDirection = glm::normalize(lookat - eye_center);
-glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));    
+glm::vec3 rightDirection   = glm::normalize(glm::cross(forwardDirection, up));
 float FoV = 45.0f; 
 float zNear = 0.1f;
 float zFar = 3000.0f;
 float cameraViewDistance = 50.0f;
-float getTerrainHeight(float globalX, float globalZ);
+
+// Instances for models (turbines, solar panels) - used for instanced rendering
 std::vector<glm::mat4> turbineInstances;
 std::vector<Chunk> activeChunks;
-std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
 std::vector<glm::mat4> solarPanelInstances;
-GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
 GLuint instanceVBO;
 GLuint solarPanelInstanceVBO;
+
+// Various texture handles used by the solar panel rendering
 GLuint baseColor, normalMap, metallicMap, roughnessMap;
 GLuint aoMap, heightMap, emissiveMap, opacityMap, specularMap;
-static float lastFrameTime = 0.0f; 
+
+// Time variables for frame timing
+static float lastFrameTime = 0.0f;
 static float deltaTime = 0.0f;
+
+// Tracking the chunk location for dynamic terrain loading
 int currentChunkX = 0;
 int currentChunkZ = 0;
+
+// Threading objects for loading chunks asynchronously
 static std::thread chunkThread;
 static std::mutex chunkMutex;
 static std::queue<std::vector<ChunkData>> chunkDataQueue;  
@@ -108,7 +124,19 @@ static std::atomic<bool> keepLoadingChunks(true);
 static double lastTime = 0.0;
 static int nbFrames = 0;
 
-// Function prototypes
+/*
+    -----------------------
+    FUNCTION DECLARATIONS
+    -----------------------
+
+    - processInput, key_callback: Handle user input for camera movement, chunk updates.
+    - updateChunks: Dynamically requests chunk generation around the camera position.
+    - renderTerrainChunks, renderSun, renderTurbine, generateTurbineInstances, etc.: These do the rendering of different scene components or set up instancing.
+    - chunkLoadingTask: Runs on a background thread, generating LOD data for new chunks.
+    - getLODIndex: Chooses an appropriate LOD based on distance from camera.
+    - getTerrainHeight, generateTerrain, setupTerrainBuffers: Helpers for creating or accessing terrain info.
+*/
+
 void processInput(GLFWwindow *window, float deltaTime);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
 void updateChunks(int chunkX, int chunkZ);
@@ -123,6 +151,19 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
 void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix);
 void chunkLoadingTask();
 int getLODIndex(float distance);
+float getTerrainHeight(float globalX, float globalZ);
+std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, std::vector<unsigned int>& indices, int chunkX, int chunkZ);
+GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
+
+/*
+    ---------------
+    MODEL LOADING
+    ---------------
+    These functions (loadTurbine, loadSolarPanel) load a glTF model from file 
+    and create the appropriate VBO/VAO/EBO structures in OpenGL. They iterate 
+    over each mesh + primitive in the glTF file, setting up attributes for 
+    POSITION, NORMAL, TEXCOORD, etc.
+*/
 
 Turbine loadTurbine(const char* path) {
     tinygltf::Model model;
@@ -146,7 +187,6 @@ Turbine loadTurbine(const char* path) {
             glGenVertexArrays(1, &vao);
             glBindVertexArray(vao);
 
-            // Setup attributes
             for (auto& attrib : primitive.attributes) {
                 const auto& accessor = model.accessors[attrib.second];
                 const auto& bufferView = model.bufferViews[accessor.bufferView];
@@ -164,7 +204,7 @@ Turbine loadTurbine(const char* path) {
                 if (attrib.first == "TEXCOORD_0") attribLocation = 2;
                 if (attrib.first == "TEXCOORD_1") {
                     std::cerr << "Warning: TEXCOORD_1 is present but ignored." << std::endl;
-                    continue; // Skip TEXCOORD_1
+                    continue; 
                 }
 
                 if (attribLocation >= 0) {
@@ -189,7 +229,6 @@ Turbine loadTurbine(const char* path) {
                 }
             }
 
-            // Prepare the TurbineMesh struct
             TurbineMesh tmesh;
             tmesh.VAO = vao;
             tmesh.EBO = 0;
@@ -198,7 +237,6 @@ Turbine loadTurbine(const char* path) {
             tmesh.vertexCount = 0;
 
             if (primitive.indices >= 0) {
-                // Indexed geometry setup
                 const auto& indexAccessor = model.accessors[primitive.indices];
                 const auto& bufferView = model.bufferViews[indexAccessor.bufferView];
                 const auto& buffer = model.buffers[bufferView.buffer];
@@ -223,7 +261,6 @@ Turbine loadTurbine(const char* path) {
                 tmesh.indexCount = indexCount;
                 tmesh.indexType = indexType;
             } else {
-                // Non-indexed geometry
                 int positionIndex = primitive.attributes.at("POSITION");
                 const auto& positionAccessor = model.accessors[positionIndex];
                 GLsizei vertexCount = static_cast<GLsizei>(positionAccessor.count);
@@ -247,7 +284,6 @@ SolarPanel loadSolarPanel(const char* path) {
     tinygltf::TinyGLTF loader;
     std::string err, warn;
 
-    // Load the GLTF model from file
     bool success = loader.LoadBinaryFromFile(&model, &err, &warn, path);
     if (!warn.empty()) {
         std::cerr << "Warning: " << warn << std::endl;
@@ -259,14 +295,12 @@ SolarPanel loadSolarPanel(const char* path) {
 
     std::vector<SolarPanelMesh> solarPanelMeshes;
 
-    // Iterate over the meshes in the GLTF model
     for (const auto& mesh : model.meshes) {
         for (const auto& primitive : mesh.primitives) {
             GLuint vao;
             glGenVertexArrays(1, &vao);
             glBindVertexArray(vao);
 
-            // Bind the vertex attributes
             for (auto& attrib : primitive.attributes) {
                 const auto& accessor = model.accessors[attrib.second];
                 const auto& bufferView = model.bufferViews[accessor.bufferView];
@@ -309,10 +343,8 @@ SolarPanel loadSolarPanel(const char* path) {
                 }
             }
 
-            // Prepare the SolarPanelMesh struct
             SolarPanelMesh spMesh = {vao, 0, 0, GL_UNSIGNED_INT, 0};
 
-            // Handle indices for indexed geometry
             if (primitive.indices >= 0) {
                 const auto& indexAccessor = model.accessors[primitive.indices];
                 const auto& bufferView = model.bufferViews[indexAccessor.bufferView];
@@ -327,7 +359,6 @@ SolarPanel loadSolarPanel(const char* path) {
                 spMesh.EBO = ebo;
                 spMesh.indexCount = indexAccessor.count;
 
-                // Determine index type
                 switch (indexAccessor.componentType) {
                     case TINYGLTF_PARAMETER_TYPE_UNSIGNED_BYTE:
                         spMesh.indexType = GL_UNSIGNED_BYTE;
@@ -343,14 +374,13 @@ SolarPanel loadSolarPanel(const char* path) {
                         break;
                 }
             } else {
-                // Non-indexed geometry
                 const auto& positionAccessor = model.accessors[primitive.attributes.at("POSITION")];
                 spMesh.vertexCount = positionAccessor.count;
             }
 
             solarPanelMeshes.push_back(spMesh);
 
-            glBindVertexArray(0); // Unbind the VAO
+            glBindVertexArray(0);
         }
     }
 
@@ -361,6 +391,14 @@ SolarPanel loadSolarPanel(const char* path) {
     return solarPanel;
 }
 
+
+/*
+    -------------
+    loadTexture
+    -------------
+    Loads a texture from disk using stb_image, creates an OpenGL texture,
+    configures wrapping/filtering, then returns the texture ID.
+*/
 
 GLuint loadTexture(const char* path) {
     GLuint textureID;
@@ -388,11 +426,17 @@ GLuint loadTexture(const char* path) {
     return textureID;
 }
 
+/*
+    ----------------------------------------
+    createSkyQuadVAO, createSunVAO
+    ----------------------------------------
+    Utility functions for creating simple geometry like a fullscreen quad for the sky,
+    a halo quad, or a sphere for the sun. These return VAO handles.
+*/
+
 GLuint createSkyQuadVAO()
 {
-    // Two triangles to cover the full screen in clip space coordinates:
     float skyVertices[] = {
-        //   X      Y
         -1.0f, -1.0f,
          1.0f, -1.0f,
          1.0f,  1.0f,
@@ -408,15 +452,12 @@ GLuint createSkyQuadVAO()
 
     glBindVertexArray(VAO);
 
-    // Vertex buffer
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(skyVertices), skyVertices, GL_STATIC_DRAW);
 
-    // Index buffer
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(skyIndices), skyIndices, GL_STATIC_DRAW);
 
-    // Positions (location = 0)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), (void*)0);
 
@@ -439,12 +480,10 @@ void generateSphere(float radius, int sectorCount, int stackCount,
             float x = xy * cosf(sectorAngle);
             float y = xy * sinf(sectorAngle);
 
-            // Position
             vertexData.push_back(x);
             vertexData.push_back(y);
             vertexData.push_back(z);
 
-            // Normal (normalize the vector since it's a sphere)
             glm::vec3 normal = glm::normalize(glm::vec3(x, y, z));
             vertexData.push_back(normal.x);
             vertexData.push_back(normal.y);
@@ -452,7 +491,6 @@ void generateSphere(float radius, int sectorCount, int stackCount,
         }
     }
 
-    // Indices
     for (int i = 0; i < stackCount; ++i) {
         int k1 = i * (sectorCount + 1);
         int k2 = k1 + sectorCount + 1;
@@ -484,17 +522,14 @@ GLuint createSunVAO() {
 
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    // Each vertex has 6 floats: position(3) + normal(3)
     glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), vertexData.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
-    // Position attribute
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
 
-    // Normal attribute
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
 
@@ -502,6 +537,13 @@ GLuint createSunVAO() {
 
     return VAO;
 }
+
+/*
+    ------------------------
+    setupTerrainBuffers
+    ------------------------
+    Creates VAO/VBO/EBO for a batch of terrain vertices/indices. Used in LODLevel creation.
+*/
 
 GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices) {
     GLuint VAO, VBO, EBO;
@@ -530,11 +572,16 @@ GLuint setupTerrainBuffers(const std::vector<Vertex>& vertices, const std::vecto
     return VAO;
 }
 
+/*
+    -------------------------
+    createHaloQuadVAO
+    -------------------------
+    Creates a simple fullscreen quad for rendering a halo effect around the sun.
+*/
+
 GLuint createHaloQuadVAO()
 {
-    // 4 vertices (2 triangles). Positions + UVs
     float vertices[] = {
-        //   X      Y     Z     U     V
         -1.0f, -1.0f, 0.0f,   0.0f, 0.0f,
          1.0f, -1.0f, 0.0f,   1.0f, 0.0f,
          1.0f,  1.0f, 0.0f,   1.0f, 1.0f,
@@ -550,19 +597,15 @@ GLuint createHaloQuadVAO()
 
     glBindVertexArray(VAO);
 
-    // Vertex buffer
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Index buffer
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    // Positions (location = 0)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
 
-    // UVs (location = 1)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
 
@@ -571,16 +614,22 @@ GLuint createHaloQuadVAO()
     return VAO;
 }
 
+/*
+    ------------------------------------
+    pollLoadedChunks
+    ------------------------------------
+    Checks for newly generated chunk data from the chunk loading thread,
+    creates VAOs for each LOD level, and adds them to the activeChunks list.
+*/
+
 void pollLoadedChunks()
 {
     std::lock_guard<std::mutex> lock(chunkMutex);
     while (!chunkDataQueue.empty())
     {
-        // We now expect chunkDataQueue.front() to contain *multiple* LOD data
         std::vector<ChunkData> lodChunkData = chunkDataQueue.front();
         chunkDataQueue.pop();
 
-        // The first LODChunkData item determines the position and chunk coords
         glm::vec2 pos   = lodChunkData[0].position;
         int       cX    = lodChunkData[0].chunkX;
         int       cZ    = lodChunkData[0].chunkZ;
@@ -590,7 +639,6 @@ void pollLoadedChunks()
         newChunk.chunkX   = cX;
         newChunk.chunkZ   = cZ;
 
-        // Build VAOs for each LOD level
         for (auto& cd : lodChunkData)
         {
             GLuint vao = setupTerrainBuffers(cd.vertices, cd.indices);
@@ -603,6 +651,20 @@ void pollLoadedChunks()
         activeChunks.push_back(newChunk);
     }
 }
+
+/*
+    ---------------
+    main()
+    ---------------
+    The entry point:
+    1. Initialize GLFW/GLAD.
+    2. Create window, set up camera & callbacks.
+    3. Configure shadow-map FBO.
+    4. Load textures, models, and shaders.
+    5. Create VAOs for the sun, halo, sky, etc.
+    6. Spawn chunk loading thread.
+    7. Main loop: handle input, poll new chunks, render passes (shadow, sky, terrain, objects).
+*/
 
 int main() {
     if (!glfwInit()) {
@@ -636,7 +698,6 @@ int main() {
     GLuint depthMapFBO;
     glGenFramebuffers(1, &depthMapFBO);
 
-    // Create the depth texture
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
@@ -644,13 +705,11 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    // Prevent shadow edges from clamping incorrectly
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
     glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
-    // Attach depth texture to FBO
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
     glDrawBuffer(GL_NONE); 
@@ -775,7 +834,7 @@ int main() {
 
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(FoV), 1024.0f / 768.0f, zNear, zFar);
 
-    float orthoSize = 7000.0f; // Adjust as needed to fit your scene
+    float orthoSize = 7000.0f; 
     glm::mat4 lightProjection = glm::ortho( -orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 5000.0f);
     glm::vec3 lightPos = eye_center - sunlightDirection * 1000.0f; 
     glm::mat4 lightView = glm::lookAt(lightPos, lightPos + sunlightDirection, glm::vec3(0, 1, 0));
@@ -830,8 +889,19 @@ int main() {
 
     double frameStartTime = glfwGetTime();
 
+    /*
+        ---------------------------------
+        Main Rendering Loop
+        ---------------------------------
+        1) Calculate delta time and FPS.
+        2) Process input (camera movement).
+        3) Poll for newly loaded chunks.
+        4) Render scene in two passes:
+           - Shadow pass: render terrain, turbines, solar panels from light's POV.
+           - Main pass: render sky, terrain, sun, halo, turbines, solar panels.
+    */
+
     while (!glfwWindowShouldClose(window)) {
-        // Frame start
         float currentFrameTime = glfwGetTime();
         deltaTime = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
@@ -961,7 +1031,6 @@ int main() {
 
     glfwTerminate();
 
-    // Signal thread to stop, then join
     keepLoadingChunks = false;
     if (chunkThread.joinable()) {
         chunkThread.join();
@@ -969,6 +1038,15 @@ int main() {
 
     return 0;
 }
+
+
+/*
+    ---------------------------------------------------
+    renderTerrainChunks
+    ---------------------------------------------------
+    Renders each active chunk using the appropriate LOD.
+    Chooses an LOD level based on camera distance to chunk center.
+*/
 
 void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint texture, glm::mat4 lightSpaceMatrix, GLuint depthMap)
 {
@@ -1022,6 +1100,12 @@ void renderTerrainChunks(GLuint shader, const glm::mat4& vpMatrix, GLuint textur
     }
 }
 
+/*
+    ---------------
+    renderSun
+    ---------------
+    Renders a small sphere in front of the camera to represent the sun in the sky.
+*/
 
 void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
@@ -1048,6 +1132,14 @@ void renderSun(GLuint shader, GLuint sunVAO, const glm::mat4& vpMatrix) {
     glDrawElements(GL_TRIANGLES, 36 * 18 * 6, GL_UNSIGNED_INT, 0);
 }
 
+/*
+    -------------
+    renderHalo
+    -------------
+    Renders a screen-aligned quad with a halo effect around the sun.
+    This is drawn in transparency mode on top of the scene.
+*/
+
 void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix) {
     glUseProgram(shader);
 
@@ -1068,7 +1160,6 @@ void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix) {
                         * billboard
                         * glm::scale(glm::mat4(1.0f), glm::vec3(50.0f)); 
 
-    // Set uniforms
     glUniformMatrix4fv(glGetUniformLocation(shader, "vpMatrix"), 1, GL_FALSE, &vpMatrix[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, &modelHalo[0][0]);
 
@@ -1078,10 +1169,17 @@ void renderHalo(GLuint shader, GLuint haloQuadVAO, const glm::mat4& vpMatrix) {
     glUniform1f(glGetUniformLocation(shader, "haloAlpha"), 0.3f);  
     glUniform1f(glGetUniformLocation(shader, "haloIntensity"), 1.0f);  
 
-    // Draw the halo quad
     glBindVertexArray(haloQuadVAO);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
+
+/*
+    ----------------
+    renderTurbine
+    ----------------
+    Draws the wind turbines using instancing. Each instance transform is 
+    loaded in the instance VBO. One special mesh (blades) is rotated over time.
+*/
 
 void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMatrix, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
     glUseProgram(shader);
@@ -1108,7 +1206,7 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
     for (size_t i = 0; i < turbine.meshes.size(); ++i) {
         glm::mat4 modelMatrix = baseModelMatrix;
 
-        if (i == 16) { // Blade mesh
+        if (i == 16) {  
             modelMatrix = glm::translate(modelMatrix, bladeAttachmentPoint);
             modelMatrix = glm::scale(modelMatrix, rotationCircleScale);
             modelMatrix = glm::rotate(modelMatrix, glm::radians(bladeRotation), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -1133,6 +1231,14 @@ void renderTurbine(const Turbine& turbine, GLuint shader, const glm::mat4& vpMat
     }
 }
 
+/*
+    --------------------
+    renderSolarPanels
+    --------------------
+    Similar to renderTurbine, but using the solar panel textures, 
+    and also instanced.
+*/
+
 void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::mat4& vpMatrix,
                        GLuint baseColor, GLuint normalMap, GLuint metallicMap, GLuint roughnessMap,
                        GLuint aoMap, GLuint heightMap, GLuint emissiveMap, GLuint opacityMap, GLuint specularMap, glm::mat4 lightSpaceMatrix, GLuint depthMap) {
@@ -1149,11 +1255,9 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
     glUniform3fv(glGetUniformLocation(shader, "lightDir"), 1, &sunlightDirection[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &sunlightColor[0]);
 
-    // Pass the VP matrix
     GLint vpMatrixLoc = glGetUniformLocation(shader, "vpMatrix");
     glUniformMatrix4fv(vpMatrixLoc, 1, GL_FALSE, &vpMatrix[0][0]);
 
-    // Bind textures and set uniforms
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, baseColor);
     glUniform1i(glGetUniformLocation(shader, "baseColorMap"), 0);
@@ -1190,7 +1294,6 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
     glBindTexture(GL_TEXTURE_2D, specularMap);
     glUniform1i(glGetUniformLocation(shader, "specularMap"), 8);
 
-    // Render each mesh
     for (const auto& mesh : solarPanel.meshes) {
         glBindVertexArray(mesh.VAO);
         if (mesh.indexCount > 0) {
@@ -1201,15 +1304,32 @@ void renderSolarPanels(const SolarPanel& solarPanel, GLuint shader, const glm::m
     }
 }
 
+
+/*
+    -------------
+    getLODIndex
+    -------------
+    Simple LOD heuristic: closer chunks get more detail, 
+    farther chunks get less detail.
+*/
+
 int getLODIndex(float distance)
 {
     if (distance < 400.0f)
-        return 0;  // Highest detail
+        return 0;  
     else if (distance < 800.0f)
-        return 1;  // Medium detail
+        return 1; 
     else
-        return 2;  // Lowest detail
+        return 2; 
 }
+
+/*
+    ---------------------------
+    generateTurbineInstances
+    ---------------------------
+    Randomly places NUM_TURBINES turbines around the terrain. Each instance
+    is represented by a 4x4 model matrix. This is later bound to an instanced VBO.
+*/
 
 void generateTurbineInstances()
 {
@@ -1236,6 +1356,14 @@ void generateTurbineInstances()
         turbineInstances.push_back(model);
     }
 }
+
+/*
+    ------------------------------
+    generateSolarPanelInstances
+    ------------------------------
+    Similar to turbines, but for solar panels. 
+    The panel is slightly tilted, and faced towards the camera.
+*/
 
 void generateSolarPanelInstances(int panelCount)
 {
@@ -1279,16 +1407,22 @@ void generateSolarPanelInstances(int panelCount)
     }
 }
 
+/*
+    --------------
+    updateChunks
+    --------------
+    Decides which chunks are in range of the camera, removes out-of-range chunks,
+    and queues up requests for missing chunks. This is part of the dynamic LOD terrain system.
+*/
+
 void updateChunks(int cx, int cz)
 {
-    // Our chosen "load distance" for chunks:
     int range = 10;
     int startX = cx - range;
     int endX   = cx + range;
     int startZ = cz - range;
     int endZ   = cz + range;
 
-    // 1) Remove out-of-range chunks
     activeChunks.erase(
         std::remove_if(activeChunks.begin(), activeChunks.end(),
             [=](const Chunk &chunk)
@@ -1300,7 +1434,6 @@ void updateChunks(int cx, int cz)
         activeChunks.end()
     );
 
-    // 2) Enqueue requests for chunks in range that we do not already have
     for (int z = startZ; z <= endZ; ++z) {
         for (int x = startX; x <= endX; ++x) {
             bool found = false;
@@ -1318,8 +1451,14 @@ void updateChunks(int cx, int cz)
     }
 }
 
-
-
+/*
+    -------------------------
+    generateTerrain
+    -------------------------
+    Uses FastNoiseLite to generate a heightmap for a given chunk. 
+    We produce (gridSize+1)*(gridSize+1) vertices, forming a grid. 
+    Then we build the index list for triangle rendering.
+*/
 
 std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, float heightScale, 
                                     std::vector<unsigned int>& indices, int chunkX, int chunkZ)
@@ -1387,6 +1526,14 @@ std::vector<Vertex> generateTerrain(unsigned int gridSize, float gridScale, floa
     return vertices;
 }
 
+/*
+    ---------------------
+    getTerrainHeight
+    ---------------------
+    A quick utility for sampling the same noise function used for the terrain, 
+    allowing objects (turbines, panels) to be placed on the ground.
+*/
+
 float getTerrainHeight(float globalX, float globalZ)
 {
     static FastNoiseLite noise;
@@ -1415,6 +1562,16 @@ float getTerrainHeight(float globalX, float globalZ)
 
     return height;
 }
+
+/*
+    ----------------------
+    chunkLoadingTask
+    ----------------------
+    Runs on a separate thread. When new chunks are requested, it:
+    1) Dequeues a chunk request (x,z).
+    2) Generates multiple LODs for that chunk.
+    3) Pushes the results onto the chunkDataQueue.
+*/
 
 void chunkLoadingTask()
 {
@@ -1452,7 +1609,7 @@ void chunkLoadingTask()
         {
             std::vector<unsigned int> indices;
             std::vector<Vertex> vertices = generateTerrain(
-                lodGrid, // <--- smaller or bigger
+                lodGrid, 
                 GRID_SCALE * (static_cast<float>(GRID_SIZE) / lodGrid),
                 HEIGHT_SCALE,
                 indices,
@@ -1475,6 +1632,14 @@ void chunkLoadingTask()
         }
     }
 }
+
+/*
+    ----------------
+    processInput
+    ----------------
+    Handles keyboard input for camera movement (WASD or arrow keys),
+    and updates the currently focused chunk if necessary.
+*/
 
 void processInput(GLFWwindow *window, float deltaTime) {
     static float baseSpeed = 25.0f;
