@@ -4,9 +4,9 @@
 
 ### **Infinite Landscape: A Futuristic Ireland**
 
-This project creates an infinite landscape inspired by Ireland's iconic green hills, enhanced with futuristic elements such as advanced wind turbines and solar farms. The scene includes animated sheep and cows, offering an engaging and dynamic environment.
+This project creates an infinite landscape inspired by Ireland's iconic green hills, enhanced with futuristic elements such as advanced wind turbines and solar farms. The scene offers an engaging and dynamic environment.
 
-The project utilises essential 3D graphics techniques, including geometry rendering, texture mapping, lighting, shadows, animation, and user interaction. For an advanced feature, **Instancing** is implemented to efficiently render multiple copies of objects, optimising performance in the infinite scene.
+The project utilises essential 3D graphics techniques, including geometry rendering, texture mapping, lighting, shadows, animation, and user interaction. For an advanced feature, **Instancing** and **Level of Detail** techniques are implemented to efficiently render multiple copies of objects, optimising performance in the infinite scene.
 
 
 ## **Scene Elements**
@@ -23,19 +23,6 @@ The project utilises essential 3D graphics techniques, including geometry render
 - **Placement:** Arrays of solar panels on hilltops or flat areas.
 - **Material:** Reflective textures to simulate solar panels.
 
-### **Sheep and Cows**
-- **Models:** Simple 3D models with basic animations (e.g., grazing).
-- **Placement:** Distributed across the landscape in farms or open fields.
-
-### **Additional Vegetation**
-- **Details:** Trees or bushes for added variety.
-- **Optimisation:** Use of billboarding for distant trees.
-
-### **Skybox/Background**
-- **Dynamic Sky:** Possible day-night cycle for realism.
-- **Effects:** Clouds or weather effects, time permitting.
-
-
 ## **Camera and User Interaction**
 - **Keyboard Controls:** Move forward, backward, left, and right.
 - **Mouse Controls:** Look around to explore the infinite landscape.
@@ -47,3 +34,5 @@ The project utilises essential 3D graphics techniques, including geometry render
 
 ## **Advanced Feature: Instancing**
 Efficient rendering of repeated objects such as turbines, animals, and trees. This approach minimises performance overhead while maintaining a rich, populated scene.
+
+### **Github link** https://github.com/lizchow1/computer_graphics_project
